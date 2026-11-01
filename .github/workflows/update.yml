@@ -45,6 +45,9 @@ jobs:
             echo "::warning::Secret FOOTBALL_DATA_API_KEY absent : le site affichera des données simulées."
           fi
 
+      - name: Historique (football-data.co.uk)
+        run: python scripts/fetch_history.py || echo "::warning::Historique indisponible, analyses sans historique."
+
       - name: Calcul des analyses
         run: |
           if ls data/raw/*.json >/dev/null 2>&1; then
@@ -55,10 +58,10 @@ jobs:
 
       - name: Sauvegarde de l'historique
         run: |
-          if [ -d data/raw ] && [ -n "$(git status --porcelain data/raw)" ]; then
+          if [ -n "$(git status --porcelain data/raw data/history 2>/dev/null)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/raw
+            git add data/raw data/history 2>/dev/null || true
             git commit -m "Données du $(date -u +%Y-%m-%d)"
             git push
           fi
