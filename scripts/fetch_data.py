@@ -60,13 +60,16 @@ def main() -> int:
         time.sleep(PAUSE)
         standings = get(f"/competitions/{code}/standings?season={season}", key)
         time.sleep(PAUSE)
+        scorers = get(f"/competitions/{code}/scorers?season={season}&limit=50", key)
+        time.sleep(PAUSE)
         if matches is None:
             print(f"{code} {season} : non disponible", file=sys.stderr)
             continue
         out = {"code": code, "season": season,
                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "matches": matches.get("matches", []),
-               "standings": (standings or {}).get("standings", [])}
+               "standings": (standings or {}).get("standings", []),
+               "scorers": (scorers or {}).get("scorers", [])}
         (RAW / f"{code}_{season}.json").write_text(json.dumps(out, ensure_ascii=False))
         print(f"{code} {season} : {len(out['matches'])} matchs")
 

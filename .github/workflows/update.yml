@@ -38,7 +38,7 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           if [ -n "$FOOTBALL_DATA_API_KEY" ]; then
-            if [ "$EVENT" != "push" ] || ! ls data/raw/*.json >/dev/null 2>&1; then
+            if [ "$EVENT" != "push" ] || ! ls data/raw/*.json >/dev/null 2>&1 || [ "$(git log -1 --format=%s)" = "Rafraîchir les données" ]; then
               python scripts/fetch_data.py
             fi
           else
@@ -47,6 +47,9 @@ jobs:
 
       - name: Historique (football-data.co.uk)
         run: python scripts/fetch_history.py || echo "::warning::Historique indisponible, analyses sans historique."
+
+      - name: Stats avancées et joueurs (understat.com)
+        run: python scripts/fetch_understat.py || echo "::warning::Understat indisponible, analyses sans stats joueurs."
 
       - name: Calcul des analyses
         run: |
@@ -58,10 +61,10 @@ jobs:
 
       - name: Sauvegarde de l'historique
         run: |
-          if [ -n "$(git status --porcelain data/raw data/history 2>/dev/null)" ]; then
+          if [ -n "$(git status --porcelain data/raw data/history data/understat 2>/dev/null)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/raw data/history 2>/dev/null || true
+            git add data/raw data/history data/understat 2>/dev/null || true
             git commit -m "Données du $(date -u +%Y-%m-%d)"
             git push
           fi
