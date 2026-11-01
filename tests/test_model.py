@@ -67,3 +67,34 @@ def _corr(x, y):
     mx, my = sum(x) / len(x), sum(y) / len(y)
     cov = sum((a - mx) * (b - my) for a, b in zip(x, y))
     return cov / math.sqrt(sum((a - mx) ** 2 for a in x) * sum((b - my) ** 2 for b in y))
+
+
+def test_implied_odds_remove_margin():
+    import history
+    o = history.implied(2.0, 3.4, 4.0, 1.9, 1.9)
+    assert abs(o["p_home"] + o["p_draw"] + o["p_away"] - 1) < 1e-3
+    assert o["p_home"] > o["p_away"] and abs(o["over25"] - 0.5) < 1e-3
+
+
+def test_name_mapping_from_common_matches():
+    import history
+    fd = [{"date": f"2026-09-{d:02d}T15:00:00Z", "home": h, "away": a, "hg": hg, "ag": ag}
+          for d, h, a, hg, ag in [(1, "1", "2", 2, 0), (8, "2", "3", 1, 1), (15, "3", "1", 0, 3), (22, "1", "3", 4, 2), (29, "2", "1", 0, 1)]]
+    co = [{"date": f"2026-09-{d:02d}T15:00:00Z", "home_name": h, "away_name": a, "hg": hg, "ag": ag}
+          for d, h, a, hg, ag in [(1, "Paris SG", "Lyon", 2, 0), (8, "Lyon", "Nice", 1, 1), (15, "Nice", "Paris SG", 0, 3), (22, "Paris SG", "Nice", 4, 2), (29, "Lyon", "Paris SG", 0, 1)]]
+    assert history.build_mapping(co, fd) == {"Paris SG": "1", "Lyon": "2", "Nice": "3"}
+
+
+def test_elo_seasons_promoted_team_starts_low():
+    # saison 1 : a > b > c > d > e (le plus fort gagne toujours)
+    order = ["a", "b", "c", "d", "e"]
+    s1, k = [], 0
+    for i, h in enumerate(order):
+        for j, a in enumerate(order):
+            if h != a:
+                k += 1
+                s1.append({"date": f"2025-01-01T00:00:00Z".replace("01T00", f"{1 + k % 28:02d}T{k % 24:02d}"),
+                           "home": h, "away": a, "hg": 2 if i < j else 0, "ag": 0 if i < j else 2})
+    s2 = [{"date": "2026-08-01T15:00:00Z", "home": "x", "away": "a", "hg": 0, "ag": 1}]
+    r = model.elo_seasons([s1, s2])
+    assert r["x"] < 1500 < r["a"]

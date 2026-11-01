@@ -7,11 +7,14 @@ Aucune dépendance externe. Un match normalisé est un dict :
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from bisect import bisect_left
+from datetime import datetime, timedelta, timezone
 
 MAX_GOALS = 10          # taille de la matrice des scores
-DECAY_PER_DAY = 0.004   # pondération temporelle (demi-vie ~ 170 jours)
-PRIOR_MATCHES = 6.0     # régularisation vers la moyenne (en "matchs fictifs")
+DECAY_PER_DAY = 0.002   # pondération temporelle (demi-vie ~ 350 jours, réglé sur 2024-26)
+PRIOR_MATCHES = 3.0     # régularisation vers la moyenne (en "matchs fictifs")
+XG_WEIGHT = 0.5         # part des xG dans la cible quand ils sont disponibles
+HISTORY_DAYS = 3 * 365  # matchs pris en compte pour estimer les forces
 
 
 def parse_date(s: str) -> datetime:
@@ -83,14 +86,16 @@ def markets(lh: float, la: float, rho: float = 0.0) -> dict:
 
 def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | None = None,
                   decay: float = DECAY_PER_DAY, prior: float = PRIOR_MATCHES,
-                  iterations: int = 60, fit_rho: bool = True) -> dict:
+                  iterations: int = 60, fit_rho: bool = True, xg_weight: float | None = None) -> dict:
     """Estime attaque/défense de chaque équipe (modèle de Maher pondéré dans le temps).
 
     lambda_dom = mu_dom * att[dom] * def[ext]
     lambda_ext = mu_ext * att[ext] * def[dom]
     att > 1 : attaque au-dessus de la moyenne. def > 1 : défense plus perméable que la moyenne.
     """
-    played = [m for m in matches if is_played(m) and parse_date(m["date"]) < ref_date]
+    xw = XG_WEIGHT if xg_weight is None else xg_weight
+    oldest = ref_date - timedelta(days=HISTORY_DAYS)
+    played = [m for m in matches if is_played(m) and oldest <= parse_date(m["date"]) < ref_date]
     team_set = set(teams or [])
     for m in played:
         team_set.update((m["home"], m["away"]))
@@ -99,7 +104,11 @@ def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | No
     rows = []
     for m in played:
         days = (ref_date - parse_date(m["date"])).total_seconds() / 86400
-        rows.append((m["home"], m["away"], m["hg"], m["ag"], math.exp(-decay * days)))
+        th, ta = m["hg"], m["ag"]
+        if xw and m.get("hxg") is not None and m.get("axg") is not None:
+            th = (1 - xw) * th + xw * m["hxg"]
+            ta = (1 - xw) * ta + xw * m["axg"]
+        rows.append((m["home"], m["away"], th, ta, math.exp(-decay * days), m["hg"], m["ag"]))
 
     if not rows:
         return {"mu_home": 1.5, "mu_away": 1.2, "rho": 0.0, "n_matches": 0,
@@ -116,7 +125,7 @@ def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | No
     for _ in range(iterations):
         g_for = {t: 0.0 for t in team_ids}
         e_for = {t: 0.0 for t in team_ids}
-        for h, a, hg, ag, w in rows:
+        for h, a, hg, ag, w, _, _ in rows:
             g_for[h] += w * hg
             e_for[h] += w * mu_home * dfn[a]
             g_for[a] += w * ag
@@ -126,7 +135,7 @@ def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | No
 
         g_ag = {t: 0.0 for t in team_ids}
         e_ag = {t: 0.0 for t in team_ids}
-        for h, a, hg, ag, w in rows:
+        for h, a, hg, ag, w, _, _ in rows:
             g_ag[h] += w * ag
             e_ag[h] += w * mu_away * att[a]
             g_ag[a] += w * hg
@@ -140,7 +149,7 @@ def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | No
         for k in range(-20, 11):
             r = k / 100
             ll = 0.0
-            for h, a, hg, ag, w in rows:
+            for h, a, _, _, w, hg, ag in rows:
                 if hg > 1 or ag > 1:
                     continue
                 lh = mu_home * att[h] * dfn[a]
@@ -201,6 +210,23 @@ def elo_ratings(matches: list[dict], k: float = 20.0, home_adv: float = 60.0,
 def regress_elo(ratings: dict, factor: float = 1 / 3) -> dict:
     """Entre deux saisons : on ramène chaque note d'un tiers vers 1500."""
     return {t: r - (r - 1500) * factor for t, r in ratings.items()}
+
+
+def elo_seasons(seasons: list[list[dict]]) -> dict:
+    """Elo sur plusieurs saisons (dans l'ordre). Entre deux saisons, les notes sont ramenées
+    vers la moyenne ; un promu démarre à la moyenne des 3 plus faibles de la saison passée."""
+    ratings: dict = {}
+    prev_teams: set = set()
+    for matches in seasons:
+        teams = {m["home"] for m in matches} | {m["away"] for m in matches}
+        if ratings:
+            prev = regress_elo(ratings)
+            floor = sorted(prev[t] for t in prev_teams if t in prev)[:3] or [1500.0]
+            newcomer = sum(floor) / len(floor)
+            ratings = {t: prev[t] if t in prev_teams and t in prev else newcomer for t in teams}
+        ratings = elo_ratings(matches, start=ratings)
+        prev_teams = teams
+    return ratings
 
 
 # --------------------------------------------------------------------------- Stats d'équipe
@@ -293,62 +319,82 @@ def league_trends(matches: list[dict]) -> dict:
 
 # --------------------------------------------------------------------------- Backtest
 
-def backtest(season_matches: list[dict], history: list[dict], min_matchday: int = 5) -> dict:
-    """Pour chaque match joué de la saison (après la journée min_matchday), le modèle est
-    ré-estimé avec UNIQUEMENT les matchs antérieurs, puis on compare prédiction et résultat."""
+def backtest(season_matches: list[dict], history: list[dict], min_matchday: int = 5,
+             keep_recent: int = 30) -> dict:
+    """Pour chaque match joué (après la journée min_matchday), le modèle est ré-estimé avec
+    UNIQUEMENT les matchs antérieurs, puis on compare prédiction et résultat. Si le match
+    porte des cotes ("odds"), on mesure aussi les bookmakers sur les mêmes matchs."""
     played = sorted((m for m in season_matches if is_played(m)
                      and (m.get("matchday") or 99) > min_matchday), key=lambda m: m["date"])
     if not played:
         return {"n": 0}
-    pool = history + season_matches
+    pool = sorted((m for m in history + season_matches if is_played(m)), key=lambda m: m["date"])
+    pool_dates = [m["date"] for m in pool]
+    # fréquences 1/N/2 cumulées (référence naïve)
+    cum = [(0, 0, 0)]
+    for m in pool:
+        h, d, a = cum[-1]
+        cum.append((h + (m["hg"] > m["ag"]), d + (m["hg"] == m["ag"]), a + (m["hg"] < m["ag"])))
+
     cache: dict[str, dict] = {}
-    n = hits = o25_hits = btts_hits = 0
-    brier = logloss = brier_base = 0.0
-    calib = {b: [0, 0.0, 0] for b in range(10)}  # tranche -> [n, somme proba, nb réalisés]
+    acc = {"n": 0, "hits": 0, "brier": 0.0, "logloss": 0.0, "brier_base": 0.0, "o25": 0, "btts": 0,
+           "bn": 0, "bhits": 0, "bbrier": 0.0, "mbrier_on_b": 0.0, "mhits_on_b": 0}
+    calib = {b: [0, 0.0, 0] for b in range(10)}
     recent = []
-    # baseline : fréquences 1/N/2 observées avant le match
     for m in played:
         day = m["date"][:10]
         if day not in cache:
-            cache[day] = fit_strengths(pool, parse_date(day + "T00:00:00Z"),
-                                       iterations=30, fit_rho=False)
+            cache[day] = fit_strengths(pool, parse_date(day + "T00:00:00Z"), iterations=30, fit_rho=False)
         p = predict(cache[day], m["home"], m["away"])
         probs = [p["p_home"], p["p_draw"], p["p_away"]]
         outcome = 0 if m["hg"] > m["ag"] else 1 if m["hg"] == m["ag"] else 2
-        n += 1
-        hits += probs.index(max(probs)) == outcome
-        brier += sum((probs[i] - (i == outcome)) ** 2 for i in range(3))
-        logloss += -math.log(max(probs[outcome], 1e-9))
-        prev = [x for x in pool if is_played(x) and x["date"] < m["date"]]
-        if prev:
-            f = [sum(x["hg"] > x["ag"] for x in prev), sum(x["hg"] == x["ag"] for x in prev),
-                 sum(x["hg"] < x["ag"] for x in prev)]
-            base = [v / len(prev) for v in f]
-        else:
-            base = [0.45, 0.27, 0.28]
-        brier_base += sum((base[i] - (i == outcome)) ** 2 for i in range(3))
-        o25_hits += (p["over25"] >= 0.5) == (m["hg"] + m["ag"] > 2)
-        btts_hits += (p["btts"] >= 0.5) == (m["hg"] > 0 and m["ag"] > 0)
+        brier = sum((probs[i] - (i == outcome)) ** 2 for i in range(3))
+        hit = probs.index(max(probs)) == outcome
+        acc["n"] += 1
+        acc["hits"] += hit
+        acc["brier"] += brier
+        acc["logloss"] += -math.log(max(probs[outcome], 1e-9))
+        k = bisect_left(pool_dates, m["date"])
+        h, d, a = cum[k]
+        base = [h / k, d / k, a / k] if k else [0.45, 0.27, 0.28]
+        acc["brier_base"] += sum((base[i] - (i == outcome)) ** 2 for i in range(3))
+        acc["o25"] += (p["over25"] >= 0.5) == (m["hg"] + m["ag"] > 2)
+        acc["btts"] += (p["btts"] >= 0.5) == (m["hg"] > 0 and m["ag"] > 0)
+        o = m.get("odds")
+        if o:
+            bp = [o["p_home"], o["p_draw"], o["p_away"]]
+            acc["bn"] += 1
+            acc["bhits"] += bp.index(max(bp)) == outcome
+            acc["bbrier"] += sum((bp[i] - (i == outcome)) ** 2 for i in range(3))
+            acc["mbrier_on_b"] += brier
+            acc["mhits_on_b"] += hit
         for i in range(3):
             b = min(int(probs[i] * 10), 9)
             calib[b][0] += 1
             calib[b][1] += probs[i]
             calib[b][2] += i == outcome
-        recent.append({"date": m["date"][:10], "home": m["home"], "away": m["away"],
+        recent.append({"date": day, "home": m["home"], "away": m["away"],
                        "score": f"{m['hg']}-{m['ag']}", "p_home": p["p_home"],
-                       "p_draw": p["p_draw"], "p_away": p["p_away"],
-                       "hit": probs.index(max(probs)) == outcome})
-    return {
+                       "p_draw": p["p_draw"], "p_away": p["p_away"], "hit": hit})
+    n = acc["n"]
+    out = {
         "n": n,
-        "accuracy_1x2": round(hits / n, 3),
-        "brier": round(brier / n, 4),
-        "brier_baseline": round(brier_base / n, 4),
-        "logloss": round(logloss / n, 4),
-        "accuracy_over25": round(o25_hits / n, 3),
-        "accuracy_btts": round(btts_hits / n, 3),
+        "accuracy_1x2": round(acc["hits"] / n, 3),
+        "brier": round(acc["brier"] / n, 4),
+        "brier_baseline": round(acc["brier_base"] / n, 4),
+        "logloss": round(acc["logloss"] / n, 4),
+        "accuracy_over25": round(acc["o25"] / n, 3),
+        "accuracy_btts": round(acc["btts"] / n, 3),
         "calibration": [{"bin": f"{b * 10}-{b * 10 + 10}%", "n": v[0],
                          "predicted": round(v[1] / v[0], 3) if v[0] else None,
                          "observed": round(v[2] / v[0], 3) if v[0] else None}
                         for b, v in calib.items()],
-        "recent": recent[-30:][::-1],
+        "recent": recent[-keep_recent:][::-1] if keep_recent else [],
     }
+    if acc["bn"]:
+        bn = acc["bn"]
+        out["bookmakers"] = {"n": bn, "accuracy_1x2": round(acc["bhits"] / bn, 3),
+                             "brier": round(acc["bbrier"] / bn, 4),
+                             "model_accuracy_1x2": round(acc["mhits_on_b"] / bn, 3),
+                             "model_brier": round(acc["mbrier_on_b"] / bn, 4)}
+    return out

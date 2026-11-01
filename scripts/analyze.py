@@ -1,4 +1,9 @@
-"""Transforme les données brutes (data/raw) en fichiers prêts pour le site (site/data).
+"""Transforme les données brutes en fichiers prêts pour le site (site/data).
+
+Sources :
+  data/raw/      football-data.org (saison en cours : calendrier, résultats, classement officiel)
+  data/history/  football-data.co.uk (10 saisons : résultats, mi-temps, tirs, corners, cartons,
+                 xG, cotes des bookmakers, prochains matchs avec cotes)
 
 Usage : python scripts/analyze.py [--demo]
 """
@@ -10,6 +15,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import history
 import model
 from leagues import LEAGUES
 
@@ -32,13 +38,16 @@ def normalise(raw_matches: list[dict], teams: dict) -> list[dict]:
                 "tla": t.get("tla") or (t.get("shortName") or "???")[:3].upper(),
                 "crest": t.get("crest") or "",
             })
-        ft = (m.get("score") or {}).get("fullTime") or {}
+        score = m.get("score") or {}
+        ft, ht = score.get("fullTime") or {}, score.get("halfTime") or {}
         finished = m.get("status") == "FINISHED"
         out.append({
             "id": m["id"], "date": m["utcDate"], "matchday": m.get("matchday"),
             "status": m.get("status"), "home": str(h["id"]), "away": str(a["id"]),
             "hg": ft.get("home") if finished else None,
             "ag": ft.get("away") if finished else None,
+            "hthg": ht.get("home") if finished else None,
+            "htag": ht.get("away") if finished else None,
         })
     return sorted(out, key=lambda x: x["date"])
 
@@ -52,24 +61,53 @@ def ranks(values: dict, reverse: bool) -> dict:
     return {t: i + 1 for i, t in enumerate(order)}
 
 
+def near(d1: str, d2: str, days: int) -> bool:
+    return abs((model.parse_date(d1) - model.parse_date(d2)).total_seconds()) <= days * 86400
+
+
 def build_league(code: str, now: datetime, demo: bool) -> dict | None:
     raw = RAW.parent / "demo_raw" if demo else RAW
     files = sorted(raw.glob(f"{code}_*.json"), key=lambda p: int(p.stem.split("_")[1]))
     if not files:
         return None
     current = json.loads(files[-1].read_text())
+    cur_year = current["season"]
     teams: dict[str, dict] = {}
     season = normalise(current["matches"], teams)
-    history: list[dict] = []
+    fd_hist: list[dict] = []
     hist_teams: dict[str, dict] = {}
-    for f in files[-3:-1]:  # jusqu'à 2 saisons d'historique
-        history += normalise(json.loads(f.read_text())["matches"], hist_teams)
+    for f in files[:-1]:
+        fd_hist += normalise(json.loads(f.read_text())["matches"], hist_teams)
     for k, v in hist_teams.items():
         teams.setdefault(k, v)
-
     season_teams = sorted({m["home"] for m in season} | {m["away"] for m in season})
+    info = LEAGUES[code]
 
-    # Classement : celui de l'API s'il existe (règles de départage officielles), sinon calculé
+    # ---- historique football-data.co.uk, relié aux identifiants football-data.org
+    seasons_h = {} if demo else history.load(code)
+    all_rows = [r for y in seasons_h for r in seasons_h[y]]
+    if all_rows:
+        mapping = history.build_mapping(all_rows, season + fd_hist)
+        history.attach_ids(all_rows, mapping)
+        for r in all_rows:
+            for side in ("home", "away"):
+                tid = r[side]
+                if tid not in teams:
+                    nm = r[side + "_name"]
+                    teams[tid] = {"name": nm, "short": nm, "tla": nm[:3].upper(), "crest": ""}
+    past_years = sorted(y for y in seasons_h if y < cur_year)
+    co_past = [r for y in past_years for r in seasons_h[y] if r["hg"] is not None]
+    co_cur = [r for r in seasons_h.get(cur_year, []) if r["hg"] is not None]
+    hist_matches = co_past or fd_hist
+
+    # xG, stats et cotes du co.uk rattachés aux matchs football-data.org de la saison
+    co_index = {(r["home"], r["away"]): r for r in co_cur}
+    for m in season:
+        r = co_index.get((m["home"], m["away"]))
+        if r and model.is_played(m) and (r["hg"], r["ag"]) == (m["hg"], m["ag"]):
+            m["hxg"], m["axg"], m["odds"] = r["hxg"], r["axg"], r["odds"]
+
+    # ---- classement officiel (règles de départage) ou calculé
     table = None
     for st in current.get("standings") or []:
         if st.get("type") == "TOTAL" and st.get("table"):
@@ -81,66 +119,88 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
     if not table:
         table = model.compute_table(season, season_teams)
 
-    # Modèle de forces (historique + saison, pondéré dans le temps)
-    params = model.fit_strengths(history + season, now, teams=season_teams)
+    # ---- modèle de forces (historique + saison, pondéré dans le temps, xG inclus)
+    params = model.fit_strengths(hist_matches + season, now, teams=season_teams)
     params["att"] = {t: params["att"][t] for t in season_teams}
     params["def"] = {t: params["def"][t] for t in season_teams}
 
-    # Elo : saison(s) précédente(s), régression vers la moyenne, puis saison en cours
-    start = {}
-    if history:
-        prev = model.regress_elo(model.elo_ratings(history))
-        start = {t: r for t, r in prev.items() if t in season_teams}
-        if prev:
-            floor = sorted(prev.values())[:3]
-            newcomer = sum(floor) / len(floor)
-            for t in season_teams:
-                start.setdefault(t, newcomer)
-    elo = model.elo_ratings(season, start=start)
-    elo = {t: round(elo.get(t, start.get(t, 1500.0)), 1) for t in season_teams}
+    # ---- Elo sur toutes les saisons disponibles
+    if past_years:
+        elo_input = [[r for r in seasons_h[y] if r["hg"] is not None] for y in past_years]
+    else:
+        elo_input = [fd_hist] if fd_hist else []
+    elo_all = model.elo_seasons(elo_input + [season])
+    elo = {t: round(elo_all.get(t, 1500.0), 1) for t in season_teams}
 
-    r_att = ranks(params["att"], reverse=True)
-    r_def = ranks(params["def"], reverse=False)
-    r_elo = ranks(elo, reverse=True)
+    # ---- stats par équipe
+    r_att, r_def, r_elo = (ranks(params["att"], True), ranks(params["def"], False), ranks(elo, True))
+    past = history.past_seasons(seasons_h, season_teams, cur_year) if seasons_h else {}
     stats = {}
     for t in season_teams:
         s = model.team_stats(t, season)
         s.update({"att": params["att"][t], "def": params["def"][t], "elo": elo[t],
-                  "rank_att": r_att[t], "rank_def": r_def[t], "rank_elo": r_elo[t]})
+                  "rank_att": r_att[t], "rank_def": r_def[t], "rank_elo": r_elo[t],
+                  "game": history.game_stats(t, co_cur) if co_cur else None,
+                  "past": past.get(t, [])})
         stats[t] = s
 
+    # ---- prochains matchs + cotes des bookmakers
+    fixtures = history.load_fixtures(info["csv"]) if seasons_h else []
+    if fixtures and all_rows:
+        history.attach_ids(fixtures, mapping)
     upcoming = [m for m in season if m["status"] in UPCOMING_STATUSES
                 and now <= model.parse_date(m["date"]) <= now + timedelta(days=14)]
     if not upcoming:
         upcoming = [m for m in season if m["status"] in UPCOMING_STATUSES
                     and model.parse_date(m["date"]) >= now][:10]
-    upcoming_out = [{"id": m["id"], "date": m["date"], "matchday": m["matchday"],
-                     "status": m["status"], "home": m["home"], "away": m["away"],
-                     "pred": model.predict(params, m["home"], m["away"])} for m in upcoming]
+    upcoming_out = []
+    for m in upcoming:
+        market = next((f["odds"] for f in fixtures if f["home"] == m["home"] and f["away"] == m["away"]
+                       and near(f["date"], m["date"], 3)), None)
+        upcoming_out.append({"id": m["id"], "date": m["date"], "matchday": m["matchday"],
+                             "status": m["status"], "home": m["home"], "away": m["away"],
+                             "pred": model.predict(params, m["home"], m["away"]), "market": market})
 
     played = [m for m in season if model.is_played(m)]
-    results = [{"date": m["date"], "matchday": m["matchday"], "home": m["home"],
-                "away": m["away"], "hg": m["hg"], "ag": m["ag"]} for m in played[-30:]][::-1]
+    results = [{"date": m["date"], "matchday": m["matchday"], "home": m["home"], "away": m["away"],
+                "hg": m["hg"], "ag": m["ag"]} for m in played[-30:]][::-1]
 
-    # Tous les matchs joués (compact) pour le face-à-face côté navigateur
-    h2h = [[m["date"][:10], m["home"], m["away"], m["hg"], m["ag"]]
-           for m in history + played if model.is_played(m)]
+    # ---- face-à-face : 10 saisons + saison en cours, entre équipes actuelles
+    cur_set = set(season_teams)
+    h2h = [[r["date"][:10], r["home"], r["away"], r["hg"], r["ag"], r.get("hthg"), r.get("htag")]
+           for r in (co_past or fd_hist) + played
+           if model.is_played(r) and r["home"] in cur_set and r["away"] in cur_set]
+    h2h.sort(key=lambda x: x[0])
 
-    info = LEAGUES[code]
+    # ---- fiabilité : saison en cours + saison précédente complète
+    bt = model.backtest(season, hist_matches)
+    if len(past_years) >= 2:
+        last = [r for r in seasons_h[past_years[-1]] if r["hg"] is not None]
+        earlier = [r for y in past_years[-4:-1] for r in seasons_h[y] if r["hg"] is not None]
+        prev_bt = model.backtest(last, earlier, min_matchday=0, keep_recent=0)
+        prev_bt.pop("calibration", None)
+        prev_bt["season"] = season_label(past_years[-1])
+        bt["previous"] = prev_bt
+
+    trends = model.league_trends(season)
+    if co_cur:
+        trends["game"] = history.league_game_avgs(co_cur)
+
     return {
         "code": code, "slug": info["slug"], "name": info["name"], "country": info["country"],
-        "season": season_label(current["season"]), "demo": demo,
+        "season": season_label(cur_year), "demo": demo,
         "updated_at": now.isoformat(timespec="minutes"),
-        "teams": {t: teams[t] for t in sorted(set(season_teams) | {x for r in h2h for x in r[1:3]})},
+        "history_seasons": [season_label(y) for y in past_years],
+        "teams": {t: teams[t] for t in season_teams},
         "season_teams": season_teams,
         "table": table,
-        "trends": model.league_trends(season),
+        "trends": trends,
         "model": params,
         "team_stats": stats,
         "upcoming": upcoming_out,
         "results": results,
         "h2h": h2h,
-        "backtest": model.backtest(season, history),
+        "backtest": bt,
     }
 
 
@@ -160,9 +220,13 @@ def main() -> int:
         meta["leagues"].append({"code": code, "slug": data["slug"], "name": data["name"],
                                 "country": data["country"], "season": data["season"]})
         bt = data["backtest"]
+        prev = bt.get("previous", {})
         print(f"{data['name']} : {len(data['season_teams'])} équipes, "
-              f"{data['trends'].get('played', 0)} matchs joués, {len(data['upcoming'])} à venir, "
-              f"backtest {bt.get('n', 0)} matchs / précision 1N2 {bt.get('accuracy_1x2', '-')}")
+              f"{len(data['history_seasons'])} saisons d'historique, {len(data['h2h'])} face-à-face, "
+              f"{len(data['upcoming'])} à venir ({sum(1 for u in data['upcoming'] if u['market'])} avec cotes) | "
+              f"fiabilité saison {bt.get('accuracy_1x2', '-')} (n={bt.get('n', 0)}), "
+              f"saison passée {prev.get('accuracy_1x2', '-')} vs bookmakers "
+              f"{prev.get('bookmakers', {}).get('accuracy_1x2', '-')}")
     (OUT / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
     return 0 if meta["leagues"] else 1
 

@@ -79,6 +79,17 @@
     return `${opts[0][1]} (${pct(opts[0][0])})`;
   }
 
+  function marketLine(p, o, home, away) {
+    const r = (x) => Math.round(x * 100);
+    const labels = [`victoire ${nm(home)}`, "le nul", `victoire ${nm(away)}`];
+    const mp = [p.p_home, p.p_draw, p.p_away], bp = [o.p_home, o.p_draw, o.p_away];
+    const diffs = mp.map((v, i) => v - bp[i]);
+    const i = diffs.indexOf(Math.max(...diffs));
+    const edge = diffs[i] >= 0.05
+      ? `<span class="chip edge">Le modèle croit plus que les bookmakers à ${esc(labels[i])} (+${r(diffs[i])} pts)</span>` : "";
+    return `<div class="mkt"><span>Bookmakers</span><b>${r(o.p_home)} % · ${r(o.p_draw)} % · ${r(o.p_away)} %</b></div>${edge ? `<div class="chips">${edge}</div>` : ""}`;
+  }
+
   // ------------------------------------------------------------------ vues
   function viewMatchs() {
     const d = D();
@@ -100,6 +111,7 @@
             <span class="xg">${num(p.xg_home, 1)} – ${num(p.xg_away, 1)}<small>BUTS ATTENDUS</small></span>
             <span class="team away">${esc(nm(m.away))}</span></div>
           ${bar(p)}
+          ${m.market ? marketLine(p, m.market, m.home, m.away) : ""}
           <div class="chips"><span class="chip pick">${esc(pickLabel(p, m.home, m.away))}</span>
             <span class="chip">Score probable <b>${p.top_scores[0].score}</b></span>
             <span class="chip">+2,5 buts <b>${pct(p.over25)}</b></span>
@@ -121,7 +133,11 @@
         <div class="trend"><div class="v">${pct(t.draw)}</div><div class="k">matchs nuls</div></div>
         <div class="trend"><div class="v">${pct(t.away_win)}</div><div class="k">victoires à l'extérieur</div></div>
         <div class="trend"><div class="v">${pct(t.over25)}</div><div class="k">matchs à +2,5 buts</div></div>
-        <div class="trend"><div class="v">${pct(t.btts)}</div><div class="k">les deux équipes marquent</div></div></div>`;
+        <div class="trend"><div class="v">${pct(t.btts)}</div><div class="k">les deux équipes marquent</div></div>
+        ${t.game?.xg ? `<div class="trend"><div class="v">${num(t.game.xg)}</div><div class="k">xG par match</div></div>` : ""}
+        ${t.game?.shots ? `<div class="trend"><div class="v">${num(t.game.shots, 1)}</div><div class="k">tirs par match</div></div>` : ""}
+        ${t.game?.corners ? `<div class="trend"><div class="v">${num(t.game.corners, 1)}</div><div class="k">corners par match</div></div>` : ""}
+        ${t.game?.cards ? `<div class="trend"><div class="v">${num(t.game.cards, 1)}</div><div class="k">cartons jaunes par match</div></div>` : ""}</div>`;
     }
     html += `<div class="scroll"><table><thead><tr><th class="l">#</th><th class="l">Équipe</th><th>J</th><th>G</th><th>N</th><th>P</th><th>Buts</th><th>Diff</th><th>Pts</th><th class="l">Forme</th></tr></thead><tbody>`;
     for (const r of d.table) {
@@ -168,9 +184,59 @@
       <p class="note">Indices : 100 = moyenne du championnat. 130 en attaque = marque environ 30 % de plus qu'une équipe moyenne face au même adversaire.</p>
       <div class="scroll"><table><thead><tr><th class="l"></th><th>J</th><th>V-N-D</th><th>Buts</th><th>Pts/m</th><th>+2,5</th><th>2 marquent</th><th>Sans encaisser</th></tr></thead><tbody>
         ${row("Total", s.all)}${row("Domicile", s.home)}${row("Extérieur", s.away)}${row("5 derniers", s.last5)}</tbody></table></div>
+      ${gameBlock(s.game)}
+      ${pastBlock(s.past)}
       <div class="formlist"><div class="eyebrow">Derniers matchs</div>${form || '<p class="empty">Aucun match joué.</p>'}</div>
       ${next ? `<button class="btn" data-home="${next.home}" data-away="${next.away}" id="next-match">Analyser le prochain match : ${esc(nm(next.home))} – ${esc(nm(next.away))}</button>` : ""}
     </section>`;
+  }
+
+  function gameBlock(g) {
+    if (!g) return "";
+    const pair = (label, k, d = 1) => g[k + "_for"] != null
+      ? `<tr><td class="l">${label}</td><td>${num(g[k + "_for"], d)}</td><td>${num(g[k + "_against"], d)}</td></tr>` : "";
+    const kv = (label, v) => v != null ? `<div><span>${label}</span><b>${pct(v)}</b></div>` : "";
+    return `<div class="sub-block"><div class="eyebrow">Stats de jeu cette saison · par match</div>
+      <div class="scroll" style="border:0"><table><thead><tr><th class="l"></th><th>Pour</th><th>Contre</th></tr></thead><tbody>
+        ${pair("xG (buts attendus)", "xg", 2)}${pair("Tirs", "shots")}${pair("Tirs cadrés", "sot")}${pair("Corners", "corners")}
+        ${pair("Fautes", "fouls")}${pair("Cartons jaunes", "yellow", 2)}${pair("Cartons rouges", "red", 2)}</tbody></table></div>
+      <div class="kv">${kv("Tirs transformés en buts", g.conversion)}${kv("Mène à la mi-temps", g.ht_lead)}
+        ${kv("Gagne quand il mène à la pause", g.ht_lead_won)}${kv("Mené à la pause : nul ou victoire", g.ht_comeback)}
+        ${kv("Buts marqués en 2<sup>e</sup> période", g.goals_2nd_half)}</div></div>`;
+  }
+
+  function pastBlock(past) {
+    if (!past || !past.length) return "";
+    const cols = past.slice(-10).map((p) => {
+      if (p.pos == null) return `<div class="ps out" title="${p.season} : pas dans ce championnat"><span class="pb" style="height:4%"></span><b>–</b><small>${p.season.slice(2)}</small></div>`;
+      const h = 12 + 88 * (p.n - p.pos) / Math.max(p.n - 1, 1);
+      return `<div class="ps ${p.pos === 1 ? "champ" : ""}" title="${p.season} : ${p.pos}e, ${p.pts} pts, ${p.gf}:${p.ga}"><span class="pb" style="height:${h.toFixed(0)}%"></span><b>${p.pos}<sup>e</sup></b><small>${p.season.slice(2)}</small></div>`;
+    }).join("");
+    return `<div class="sub-block"><div class="eyebrow">Classement final des saisons passées</div><div class="past">${cols}</div>
+      <p class="note">« – » : l'équipe jouait dans une autre division cette saison-là.</p></div>`;
+  }
+
+  function h2hBlock(h, a) {
+    const d = D();
+    const all = d.h2h.filter((r) => (r[1] === h && r[2] === a) || (r[1] === a && r[2] === h));
+    if (!all.length) return `<p class="empty">Aucune confrontation depuis ${d.history_seasons?.[0] || "le début des données"}.</p>`;
+    let wh = 0, dr = 0, wa = 0, goals = 0, o25 = 0, btts = 0, vh = 0, vd = 0, va = 0, vn = 0;
+    for (const r of all) {
+      const gh = r[1] === h ? r[3] : r[4], ga = r[1] === h ? r[4] : r[3];
+      wh += gh > ga; dr += gh === ga; wa += gh < ga;
+      goals += r[3] + r[4]; o25 += r[3] + r[4] > 2; btts += r[3] > 0 && r[4] > 0;
+      if (r[1] === h) { vn++; vh += r[3] > r[4]; vd += r[3] === r[4]; va += r[3] < r[4]; }
+    }
+    const n = all.length;
+    const since = all[0][0].slice(0, 4);
+    const list = all.slice(-10).reverse().map((r) => `<div><span class="when">${shortDate(r[0])}</span><span>${esc(nm(r[1]))} – ${esc(nm(r[2]))}</span>
+      <b>${r[3]}-${r[4]}${r[5] != null ? ` <small class="ht">(${r[5]}-${r[6]})</small>` : ""}</b></div>`).join("");
+    return `<div class="h2h-sum">
+        <div class="h"><div class="v">${wh}</div><div class="k">${esc(nm(h))}</div></div>
+        <div class="d"><div class="v">${dr}</div><div class="k">nuls</div></div>
+        <div class="a"><div class="v">${wa}</div><div class="k">${esc(nm(a))}</div></div></div>
+      <p class="note">${n} matchs depuis ${since} · ${num(goals / n, 1)} buts par match · +2,5 buts : ${pct(o25 / n)} · les deux marquent : ${pct(btts / n)}${vn ? ` · chez ${esc(nm(h))} : ${vh} V, ${vd} N, ${va} D` : ""}.</p>
+      <div class="h2h">${list}</div><p class="note">Entre parenthèses : score à la mi-temps.</p>`;
   }
 
   function viewAnalyse() {
@@ -198,9 +264,16 @@
     }
     heat += `</tbody></table>`;
 
-    const h2h = d.h2h.filter((r) => (r[1] === h && r[2] === a) || (r[1] === a && r[2] === h)).slice(-10).reverse();
-    const h2hHtml = h2h.length ? h2h.map((r) => `<div><span class="when">${shortDate(r[0])}</span><span>${esc(nm(r[1]))} – ${esc(nm(r[2]))}</span><b>${r[3]}-${r[4]}</b></div>`).join("")
-      : `<p class="empty">Aucune confrontation dans les données disponibles.</p>`;
+    const fixture = d.upcoming.find((m) => m.home === h && m.away === a);
+    const gh = sh.game, ga = sa.game;
+    let extra = "";
+    if (gh?.corners_for != null && ga?.corners_for != null) {
+      const corners = (gh.corners_for + ga.corners_against) / 2 + (ga.corners_for + gh.corners_against) / 2;
+      const cards = (gh.yellow_for + ga.yellow_against) / 2 + (ga.yellow_for + gh.yellow_against) / 2;
+      extra = `<div class="chips"><span class="chip">Corners attendus <b>≈ ${num(corners, 1)}</b></span><span class="chip">Cartons jaunes attendus <b>≈ ${num(cards, 1)}</b></span></div>
+        <p class="note">Estimation à partir des moyennes de la saison des deux équipes.</p>`;
+    }
+    const gRow = (label, k, d = 1) => gh?.[k] != null && ga?.[k] != null ? `<tr><td class="l">${label}</td><td>${num(gh[k], d)}</td><td>${num(ga[k], d)}</td></tr>` : "";
 
     return `<div class="section-head"><h2>Analyse match</h2><p class="sub">Choisissez deux équipes : le calcul se fait instantanément</p></div>
       <div class="pickers"><label for="sel-home">Domicile<select id="sel-home">${opts(h)}</select></label>
@@ -211,6 +284,7 @@
           <div class="d"><div class="v">${pct(p.p_draw)}</div><div class="k">Nul</div></div>
           <div class="a"><div class="v">${pct(p.p_away)}</div><div class="k">${esc(nm(a))}</div></div></div>
         ${bar(p)}
+        ${fixture?.market ? marketLine(p, fixture.market, h, a) : ""}
         <div class="chips"><span class="chip pick">${esc(pickLabel(p, h, a))}</span>
           <span class="chip">Buts attendus <b>${num(p.xg_home)} – ${num(p.xg_away)}</b></span>
           <span class="chip">Cote juste 1/N/2 <b>${num(1 / p.p_home)} · ${num(1 / p.p_draw)} · ${num(1 / p.p_away)}</b></span></div>
@@ -218,24 +292,41 @@
       <div class="grid2">
         <section class="panel"><h3>Marchés</h3><div class="markets">
           ${mk("Plus de 1,5 but", p.over15)}${mk("Plus de 2,5 buts", p.over25)}${mk("Plus de 3,5 buts", p.over35)}
-          ${mk("Les deux équipes marquent", p.btts)}${mk(`${esc(nm(h))} ne prend pas de but`, p.home_clean_sheet)}${mk(`${esc(nm(a))} ne prend pas de but`, p.away_clean_sheet)}</div></section>
+          ${mk("Les deux équipes marquent", p.btts)}${mk(`${esc(nm(h))} ne prend pas de but`, p.home_clean_sheet)}${mk(`${esc(nm(a))} ne prend pas de but`, p.away_clean_sheet)}</div>${extra}</section>
         <section class="panel"><h3>Scores les plus probables</h3><div class="markets">
           ${p.top_scores.map((s) => mk(`${esc(nm(h))} ${s.score} ${esc(nm(a))}`, s.p)).join("")}</div></section>
       </div>
       <section class="panel"><div class="section-head"><h3>Probabilité de chaque score (%)</h3><span class="sub">lignes : ${esc(nm(h))} · colonnes : ${esc(nm(a))}</span></div>
         <div style="overflow-x:auto">${heat}</div></section>
       <div class="grid2">
-        <section class="panel"><h3>Comparaison</h3><div class="scroll" style="border:0"><table><thead><tr><th class="l"></th><th>${esc(D().teams[h].tla)}</th><th>${esc(D().teams[a].tla)}</th></tr></thead><tbody>
+        <section class="panel"><h3>Comparaison</h3><div class="scroll" style="border:0"><table class="cmp"><thead><tr><th class="l"></th><th>${esc(D().teams[h].tla)}</th><th>${esc(D().teams[a].tla)}</th></tr></thead><tbody>
           <tr><td class="l">Classement puissance</td><td>${sh.rank_elo}<sup>e</sup></td><td>${sa.rank_elo}<sup>e</sup></td></tr>
           <tr><td class="l">Indice d'attaque</td><td>${Math.round(sh.att * 100)}</td><td>${Math.round(sa.att * 100)}</td></tr>
           <tr><td class="l">Indice de défense</td><td>${Math.round(100 / sh.def)}</td><td>${Math.round(100 / sa.def)}</td></tr>
           <tr><td class="l">Pts/match (dom. / ext.)</td><td>${num(sh.home.ppg)}</td><td>${num(sa.away.ppg)}</td></tr>
           <tr><td class="l">Buts marqués/match</td><td>${num(sh.home.gf_avg)}</td><td>${num(sa.away.gf_avg)}</td></tr>
           <tr><td class="l">Buts encaissés/match</td><td>${num(sh.home.ga_avg)}</td><td>${num(sa.away.ga_avg)}</td></tr>
-          <tr><td class="l">Forme (5 derniers)</td><td>${formChips(sh.form)}</td><td>${formChips(sa.form)}</td></tr>
-        </tbody></table></div><p class="note">Stats « domicile » pour ${esc(nm(h))}, « extérieur » pour ${esc(nm(a))}.</p></section>
-        <section class="panel"><h3>Face-à-face</h3><div class="h2h">${h2hHtml}</div></section>
+          ${gRow("xG pour / match", "xg_for", 2)}${gRow("xG contre / match", "xg_against", 2)}
+          ${gRow("Tirs cadrés / match", "sot_for")}${gRow("Corners / match", "corners_for")}${gRow("Cartons jaunes / match", "yellow_for", 2)}
+        </tbody></table></div>
+        <div class="formlist"><div class="eyebrow">Forme (5 derniers matchs)</div>
+          <div><span>${esc(nm(h))}</span><span></span>${formChips(sh.form)}</div>
+          <div><span>${esc(nm(a))}</span><span></span>${formChips(sa.form)}</div></div><p class="note">Points et buts : stats « domicile » pour ${esc(nm(h))}, « extérieur » pour ${esc(nm(a))}. Stats de jeu : toute la saison.</p></section>
+        <section class="panel"><h3>Face-à-face</h3>${h2hBlock(h, a)}</section>
       </div>`;
+  }
+
+  function bookBlock(b) {
+    const rows = [];
+    if (b.bookmakers) rows.push(["Saison en cours", b.bookmakers]);
+    if (b.previous?.bookmakers) rows.push([`Saison ${b.previous.season}`, b.previous.bookmakers]);
+    if (!rows.length) return "";
+    const tr = rows.map(([lab, k]) => `<tr><td class="l">${lab}<br><small class="muted">${k.n} matchs</small></td>
+      <td><b>${pct(k.model_accuracy_1x2)}</b><br><small class="muted">Brier ${num(k.model_brier, 3)}</small></td>
+      <td><b>${pct(k.accuracy_1x2)}</b><br><small class="muted">Brier ${num(k.brier, 3)}</small></td></tr>`).join("");
+    return `<section class="panel"><h3>Face aux bookmakers</h3>
+      <div class="scroll" style="border:0"><table><thead><tr><th class="l">Période</th><th>Modèle</th><th>Bookmakers</th></tr></thead><tbody>${tr}</tbody></table></div>
+      <p class="note">Les bookmakers sont la référence la plus difficile à battre : leurs cotes intègrent les blessures, les compositions et l'argent des parieurs. Un modèle proche d'eux est déjà un bon modèle. « Modèle » et « Bookmakers » : part des résultats 1N2 bien prédits sur les mêmes matchs.</p></section>`;
   }
 
   function viewFiabilite() {
@@ -268,6 +359,7 @@
         <div class="trend"><div class="v">${pct(b.accuracy_btts)}</div><div class="k">« les deux marquent » bien prédit</div></div>
         <div class="trend"><div class="v">${num(b.brier, 3)}</div><div class="k">score de Brier (réf. ${num(b.brier_baseline, 3)})</div></div></div>
       <p class="note">Repère : les meilleurs modèles publics trouvent le bon résultat 1N2 dans environ 50 à 55 % des cas. Le score de Brier mesure l'erreur des probabilités (plus bas = mieux) ; la référence utilise seulement les fréquences moyennes du championnat. Ici le modèle est ${better ? "meilleur" : "moins bon"} que la référence.</p>
+      ${bookBlock(b)}
       <div class="grid2">
         <section class="panel calib"><h3>Les probabilités sont-elles justes ?</h3>${svg}
           <p class="note">Quand le modèle annonce 60 %, l'événement devrait arriver environ 6 fois sur 10 : plus les points suivent la diagonale, mieux c'est.</p></section>
