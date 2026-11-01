@@ -129,7 +129,9 @@
       live.events = (js.events || []).map(FL.parseEvent);
       live.slug = state.slug; live.at = new Date(); live.err = null;
     } catch (e) {
-      live.err = "La source des scores en direct ne répond pas. Nouvel essai dans 60 secondes.";
+      live.err = location.hostname.endsWith("github.io")
+        ? "La source des scores en direct ne répond pas. Nouvel essai dans 60 secondes."
+        : "preview";
     }
     live.loading = false;
     if (state.view === "direct") render();
@@ -185,9 +187,10 @@
     const evs = live.slug === state.slug ? live.events : [];
     const groups = [["in", "En cours"], ["pre", "À venir aujourd'hui"], ["post", "Terminés aujourd'hui"]];
     let html = `<div class="section-head"><h2>Direct</h2>
-      <p class="sub">${live.at ? `Actualisé à ${live.at.toLocaleTimeString("fr-FR")} · toutes les 60 s` : "Chargement…"}</p></div>
+      <p class="sub">${live.at ? `Actualisé à ${live.at.toLocaleTimeString("fr-FR")} · toutes les 60 s` : live.err ? "" : "Chargement…"}</p></div>
       <div class="date-tools"><button class="btn" id="live-refresh">Actualiser</button></div>
-      ${live.err ? `<div class="warn">${esc(live.err)}</div>` : ""}`;
+      ${live.err === "preview" ? `<div class="warn">Le direct ne peut pas s'afficher ici : cette page n'a pas le droit de lire les scores d'ESPN. Ouvrez l'app sur votre site : <b>yibnabidiba-oss.github.io/football-data.org-</b>, onglet Direct. <a href="https://yibnabidiba-oss.github.io/football-data.org-/#${state.slug}-direct" target="_blank" rel="noopener">Ouvrir le direct</a></div>`
+        : live.err ? `<div class="warn">${esc(live.err)}</div>` : ""}`;
     if (live.at && !evs.length) {
       const next = d.upcoming.find((m) => new Date(m.date) > new Date());
       html += `<p class="empty">Aucun match de ${esc(d.name)} aujourd'hui.${next ? ` Prochain match : ${esc(nm(next.home))} – ${esc(nm(next.away))}, ${esc(fmtLong.format(new Date(next.date)))}.` : ""}</p>`;

@@ -208,8 +208,9 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
     # ---- prochains matchs + cotes des bookmakers
     # Tous les matchs restants de la saison (le site calcule lui-même les pronostics lointains ;
     # ceux des 14 prochains jours sont pré-calculés ici).
-    upcoming = [m for m in season if m["status"] in UPCOMING_STATUSES
-                and model.parse_date(m["date"]) >= now - timedelta(hours=3)]
+    # (inclut les matchs en cours ou pas encore validés au moment du calcul : le direct en a besoin)
+    upcoming = [m for m in season if not model.is_played(m) and m["status"] not in ("CANCELLED", "AWARDED")
+                and model.parse_date(m["date"]) >= now - timedelta(hours=12)]
     upcoming_out = []
     for m in upcoming:
         market = next((f["odds"] for f in fixtures if f["home"] == m["home"] and f["away"] == m["away"]
