@@ -153,7 +153,9 @@
   // ------------------------------------------------------------------ vues
   function viewMatchs() {
     const d = D();
-    if (!d.upcoming.length) return `<p class="empty">Aucun match programmé dans les 14 prochains jours.</p>`;
+    if (!d.upcoming.length) return `<div class="section-head"><h2>Prochains matchs</h2></div><p class="empty">${d.official_table === false
+      ? "Le programme de ce championnat est publié en milieu de semaine : les prochains matchs apparaîtront après la mise à jour du vendredi."
+      : "Aucun match programmé dans les 14 prochains jours."}</p>`;
     const groups = new Map();
     for (const m of d.upcoming) {
       const key = fmtDay.format(new Date(m.date));
@@ -166,7 +168,7 @@
       for (const m of ms) {
         const p = m.pred;
         html += `<button class="match" data-home="${m.home}" data-away="${m.away}">
-          <div class="match-top"><span>${fmtTime.format(new Date(m.date))}${m.status === "POSTPONED" ? " · reporté" : ""}</span><span>J${m.matchday ?? "–"}</span></div>
+          <div class="match-top"><span>${fmtTime.format(new Date(m.date))}${m.status === "POSTPONED" ? " · reporté" : ""}</span><span>${m.matchday ? "J" + m.matchday : ""}</span></div>
           <div class="teams"><span class="team">${esc(nm(m.home))}</span>
             <span class="xg">${num(p.xg_home, 1)} – ${num(p.xg_away, 1)}<small>BUTS ATTENDUS</small></span>
             <span class="team away">${esc(nm(m.away))}</span></div>

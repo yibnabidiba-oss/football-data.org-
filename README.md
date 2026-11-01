@@ -59,7 +59,7 @@ Sans clé, le site fonctionne quand même avec des données simulées (clubs fic
 
 ## Mise à jour automatique
 
-- Chaque **lundi à 06:13 UTC**, GitHub récupère les résultats et le calendrier, recalcule tout et republie le site.
+- Chaque **lundi et vendredi à 06:13 UTC**, GitHub récupère les résultats, le calendrier et les cotes, recalcule tout et republie le site. La mise à jour du vendredi sert surtout aux divisions inférieures, dont le programme et les cotes ne sont publiés qu'en milieu de semaine.
 - Pour forcer une mise à jour (par exemple avant des matchs de semaine) : *Actions → Run workflow*, possible depuis l'application mobile GitHub.
 - Pour changer la fréquence, modifiez la ligne `cron` dans `.github/workflows/update.yml` (exemple pour lundi et jeudi : `13 6 * * 1,4`).
 - Les données sont conservées dans `data/raw/` (football-data.org) et `data/history/` (football-data.co.uk). Les saisons terminées ne sont téléchargées qu'une fois.

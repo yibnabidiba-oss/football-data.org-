@@ -2,7 +2,7 @@ name: Mise à jour et publication
 
 on:
   schedule:
-    - cron: "13 6 * * 1"   # chaque lundi à 06:13 UTC (après les matchs du week-end)
+    - cron: "13 6 * * 1,5"   # lundi (après le week-end) et vendredi (calendrier et cotes du week-end) à 06:13 UTC
   workflow_dispatch:         # bouton "Run workflow" pour lancer à la main
   push:
     branches: [main]
