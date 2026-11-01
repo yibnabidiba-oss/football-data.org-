@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Analyse Foot</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Analyse Foot</span>
+      <span class="season" id="season"></span>
+    </div>
+    <div class="leagues" role="tablist" aria-label="Championnat" id="leagues"></div>
+  </div>
+  <nav class="views" aria-label="Rubriques" id="views">
+    <a href="#" data-view="matchs">Pronostics</a>
+    <a href="#" data-view="classement">Classement</a>
+    <a href="#" data-view="equipes">Équipes</a>
+    <a href="#" data-view="analyse">Analyse match</a>
+    <a href="#" data-view="fiabilite">Fiabilité</a>
+  </nav>
+</header>
+
+<div class="demo-banner" id="demo" hidden>
+  Données simulées (clubs fictifs) : ajoutez votre clé football-data.org pour afficher les vrais matchs.
+</div>
+
+<main id="app" class="wrap">
+  <p class="loading">Chargement des données…</p>
+</main>
+
+<footer class="wrap foot">
+  <p id="updated"></p>
+  <p>Modèle statistique (Poisson / Dixon-Coles, Elo) basé sur les résultats passés. Les probabilités sont des estimations, pas des certitudes.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

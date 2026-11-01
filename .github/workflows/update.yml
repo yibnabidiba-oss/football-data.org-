@@ -1,0 +1,71 @@
+name: Mise à jour et publication
+
+on:
+  schedule:
+    - cron: "13 6 * * 1"   # chaque lundi à 06:13 UTC (après les matchs du week-end)
+  workflow_dispatch:         # bouton "Run workflow" pour lancer à la main
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tests du modèle
+        run: pip install pytest && pytest -q tests
+
+      - name: Récupération des données
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -n "$FOOTBALL_DATA_API_KEY" ]; then
+            if [ "$EVENT" != "push" ] || ! ls data/raw/*.json >/dev/null 2>&1; then
+              python scripts/fetch_data.py
+            fi
+          else
+            echo "::warning::Secret FOOTBALL_DATA_API_KEY absent : le site affichera des données simulées."
+          fi
+
+      - name: Calcul des analyses
+        run: |
+          if ls data/raw/*.json >/dev/null 2>&1; then
+            python scripts/analyze.py
+          else
+            python scripts/demo_data.py && python scripts/analyze.py --demo
+          fi
+
+      - name: Sauvegarde de l'historique
+        run: |
+          if [ -d data/raw ] && [ -n "$(git status --porcelain data/raw)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/raw
+            git commit -m "Données du $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

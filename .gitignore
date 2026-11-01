@@ -1,0 +1,4 @@
+__pycache__/
+.pytest_cache/
+site/data/
+data/demo_raw/
