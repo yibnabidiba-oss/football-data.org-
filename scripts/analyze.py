@@ -206,22 +206,21 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
         stats[t] = s
 
     # ---- prochains matchs + cotes des bookmakers
+    # Tous les matchs restants de la saison (le site calcule lui-même les pronostics lointains ;
+    # ceux des 14 prochains jours sont pré-calculés ici).
     upcoming = [m for m in season if m["status"] in UPCOMING_STATUSES
-                and now <= model.parse_date(m["date"]) <= now + timedelta(days=14)]
-    if not upcoming:
-        upcoming = [m for m in season if m["status"] in UPCOMING_STATUSES
-                    and model.parse_date(m["date"]) >= now][:10]
+                and model.parse_date(m["date"]) >= now - timedelta(hours=3)]
     upcoming_out = []
     for m in upcoming:
         market = next((f["odds"] for f in fixtures if f["home"] == m["home"] and f["away"] == m["away"]
                        and near(f["date"], m["date"], 3)), None)
-        upcoming_out.append({"id": m["id"], "date": m["date"], "matchday": m["matchday"],
-                             "status": m["status"], "home": m["home"], "away": m["away"],
-                             "pred": model.predict(params, m["home"], m["away"]), "market": market})
+        u = {"id": m["id"], "date": m["date"], "matchday": m["matchday"], "status": m["status"],
+             "home": m["home"], "away": m["away"], "market": market}
+        if model.parse_date(m["date"]) <= now + timedelta(days=14):
+            u["pred"] = model.predict(params, m["home"], m["away"])
+        upcoming_out.append(u)
 
     played = [m for m in season if model.is_played(m)]
-    results = [{"date": m["date"], "matchday": m["matchday"], "home": m["home"], "away": m["away"],
-                "hg": m["hg"], "ag": m["ag"]} for m in played[-30:]][::-1]
 
     # ---- face-à-face : 10 saisons + saison en cours, entre équipes actuelles
     cur_set = set(season_teams)
@@ -231,7 +230,23 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
     h2h.sort(key=lambda x: x[0])
 
     # ---- fiabilité : saison en cours + saison précédente complète
-    bt = model.backtest(season, hist_matches)
+    bt = model.backtest(season, hist_matches, min_matchday=0, keep_recent=100000)
+    pre = {(r["date"], r["home"], r["away"]): r for r in bt.get("recent", [])}
+    bt["recent"] = bt.get("recent", [])[:30]
+
+    # Tous les résultats de la saison, avec le pronostic fait AVANT chaque match
+    # (calculé uniquement avec les matchs déjà joués à cette date)
+    results = []
+    for m in played:
+        r = {"date": m["date"], "matchday": m["matchday"], "home": m["home"], "away": m["away"],
+             "hg": m["hg"], "ag": m["ag"], "hthg": m.get("hthg"), "htag": m.get("htag")}
+        b = pre.get((m["date"][:10], m["home"], m["away"]))
+        if b:
+            r["pre"] = [b["p_home"], b["p_draw"], b["p_away"]]
+        if m.get("odds"):
+            o = m["odds"]
+            r["book"] = [o["p_home"], o["p_draw"], o["p_away"]]
+        results.append(r)
     if len(past_years) >= 2:
         last = [r for r in seasons_h[past_years[-1]] if r["hg"] is not None]
         earlier = [r for y in past_years[-4:-1] for r in seasons_h[y] if r["hg"] is not None]

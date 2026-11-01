@@ -151,39 +151,94 @@
   }
 
   // ------------------------------------------------------------------ vues
+  const dayKey = (iso) => new Date(iso).toLocaleDateString("sv-SE"); // AAAA-MM-JJ, heure locale
+  const fmtDow = new Intl.DateTimeFormat("fr-FR", { weekday: "short" });
+  const fmtDM = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short" });
+  const fmtLong = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const noon = (k) => new Date(k + "T12:00:00");
+
+  function matchDays() {
+    const d = D(), days = new Map();
+    const add = (k, f) => { const v = days.get(k) || { past: 0, future: 0 }; v[f]++; days.set(k, v); };
+    for (const r of d.results || []) add(dayKey(r.date), "past");
+    for (const m of d.upcoming) add(dayKey(m.date), "future");
+    return new Map([...days.entries()].sort((a, b) => a[0].localeCompare(b[0])));
+  }
+
+  function upcomingCard(m) {
+    const p = m.pred || predict(m.home, m.away);
+    return `<button class="match" data-home="${m.home}" data-away="${m.away}">
+      <div class="match-top"><span>${fmtTime.format(new Date(m.date))}${m.status === "POSTPONED" ? " · reporté" : ""}</span><span>${m.matchday ? "J" + m.matchday : ""}</span></div>
+      <div class="teams"><span class="team">${esc(nm(m.home))}</span>
+        <span class="xg">${num(p.xg_home, 1)} – ${num(p.xg_away, 1)}<small>BUTS ATTENDUS</small></span>
+        <span class="team away">${esc(nm(m.away))}</span></div>
+      ${bar(p)}
+      ${m.market ? marketLine(p, m.market, m.home, m.away) : ""}
+      ${absentNames(m.home) || absentNames(m.away) ? `<div class="abs-line">Absents au dernier match : ${[absentNames(m.home) && `${esc(nm(m.home))} (${esc(absentNames(m.home))})`, absentNames(m.away) && `${esc(nm(m.away))} (${esc(absentNames(m.away))})`].filter(Boolean).join(" · ")}</div>` : ""}
+      <div class="chips"><span class="chip pick">${esc(pickLabel(p, m.home, m.away))}</span>
+        <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
+        <span class="chip">+2,5 buts <b>${pct(p.over25)}</b></span>
+        <span class="chip">Les deux marquent <b>${pct(p.btts)}</b></span></div>
+      ${m.pred ? "" : '<p class="note">Pronostic calculé avec les forces actuelles des équipes : il sera affiné d\'ici le match.</p>'}
+    </button>`;
+  }
+
+  function resultCard(r) {
+    const out = r.hg > r.ag ? 0 : r.hg === r.ag ? 1 : 2;
+    let pre = "";
+    if (r.pre) {
+      const p = { p_home: r.pre[0], p_draw: r.pre[1], p_away: r.pre[2] };
+      const fav = r.pre.indexOf(Math.max(...r.pre));
+      const hit = fav === out;
+      const lab = [`victoire ${nm(r.home)}`, "match nul", `victoire ${nm(r.away)}`];
+      pre = `<div class="pre-head"><span>Pronostic d'avant-match</span><span class="verdict ${hit ? "ok" : "ko"}">${hit ? "✓ juste" : "✗ raté"}</span></div>
+        ${bar(p)}
+        <p class="note">Favori : ${esc(lab[fav])} (${pct(r.pre[fav])}) · le résultat avait ${pct(r.pre[out])} de chances selon le modèle${r.book ? `, ${pct(r.book[out])} selon les bookmakers` : ""}.</p>`;
+    }
+    return `<button class="match played" data-home="${r.home}" data-away="${r.away}">
+      <div class="match-top"><span>${fmtTime.format(new Date(r.date))} · terminé</span><span>${r.matchday ? "J" + r.matchday : ""}</span></div>
+      <div class="teams"><span class="team ${out === 0 ? "win" : ""}">${esc(nm(r.home))}</span>
+        <span class="score">${r.hg} – ${r.ag}${r.hthg != null ? `<small>MI-TEMPS ${r.hthg}-${r.htag}</small>` : ""}</span>
+        <span class="team away ${out === 2 ? "win" : ""}">${esc(nm(r.away))}</span></div>
+      ${pre}
+    </button>`;
+  }
+
   function viewMatchs() {
-    const d = D();
-    if (!d.upcoming.length) return `<div class="section-head"><h2>Prochains matchs</h2></div><p class="empty">${d.official_table === false
+    const d = D(), days = matchDays(), keys = [...days.keys()];
+    if (!keys.length) return `<div class="section-head"><h2>Matchs</h2></div><p class="empty">${d.official_table === false
       ? "Le programme de ce championnat est publié en milieu de semaine : les prochains matchs apparaîtront après la mise à jour du vendredi."
-      : "Aucun match programmé dans les 14 prochains jours."}</p>`;
-    const groups = new Map();
-    for (const m of d.upcoming) {
-      const key = fmtDay.format(new Date(m.date));
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(m);
+      : "Aucun match disponible pour l'instant."}</p>`;
+    const today = new Date().toLocaleDateString("sv-SE");
+    if (!state.date) state.date = keys.find((k) => k >= today && days.get(k).future) || keys.find((k) => k >= today) || keys[keys.length - 1];
+    const sel = state.date;
+    const prev = [...keys].reverse().find((k) => k < sel), next = keys.find((k) => k > sel);
+    const chips = keys.map((k) => {
+      const v = days.get(k), dt = noon(k);
+      return `<button class="day-chip ${k === sel ? "on" : ""} ${k === today ? "today" : ""} ${v.future ? "" : "is-past"}" data-day="${k}" aria-pressed="${k === sel}">
+        <span class="dow">${fmtDow.format(dt)}</span><b>${fmtDM.format(dt)}</b><small>${v.past + v.future} match${v.past + v.future > 1 ? "s" : ""}</small></button>`;
+    }).join("");
+    const res = (d.results || []).filter((r) => dayKey(r.date) === sel);
+    const up = d.upcoming.filter((m) => dayKey(m.date) === sel);
+    let body;
+    if (!res.length && !up.length) {
+      const near = [prev, next].filter(Boolean).map((k) => `<button class="btn" data-day="${k}">${fmtLong.format(noon(k))}</button>`).join("");
+      body = `<p class="empty">Aucun match de ${esc(d.name)} ce jour-là.</p>${near ? `<div class="near">${near}</div>` : ""}`;
+    } else {
+      body = `<div class="cards">${res.map(resultCard).join("")}${up.map(upcomingCard).join("")}</div>`;
     }
-    let html = `<div class="section-head"><h2>Prochains matchs</h2><p class="sub">${d.upcoming.length} matchs · touchez un match pour l'analyse détaillée</p></div>`;
-    for (const [day, ms] of groups) {
-      html += `<section class="day"><div class="eyebrow">${esc(day)}</div><div class="cards">`;
-      for (const m of ms) {
-        const p = m.pred;
-        html += `<button class="match" data-home="${m.home}" data-away="${m.away}">
-          <div class="match-top"><span>${fmtTime.format(new Date(m.date))}${m.status === "POSTPONED" ? " · reporté" : ""}</span><span>${m.matchday ? "J" + m.matchday : ""}</span></div>
-          <div class="teams"><span class="team">${esc(nm(m.home))}</span>
-            <span class="xg">${num(p.xg_home, 1)} – ${num(p.xg_away, 1)}<small>BUTS ATTENDUS</small></span>
-            <span class="team away">${esc(nm(m.away))}</span></div>
-          ${bar(p)}
-          ${m.market ? marketLine(p, m.market, m.home, m.away) : ""}
-          ${absentNames(m.home) || absentNames(m.away) ? `<div class="abs-line">Absents au dernier match : ${[absentNames(m.home) && `${esc(nm(m.home))} (${esc(absentNames(m.home))})`, absentNames(m.away) && `${esc(nm(m.away))} (${esc(absentNames(m.away))})`].filter(Boolean).join(" · ")}</div>` : ""}
-          <div class="chips"><span class="chip pick">${esc(pickLabel(p, m.home, m.away))}</span>
-            <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
-            <span class="chip">+2,5 buts <b>${pct(p.over25)}</b></span>
-            <span class="chip">Les deux marquent <b>${pct(p.btts)}</b></span></div>
-        </button>`;
-      }
-      html += `</div></section>`;
-    }
-    return html;
+    const n = res.length + up.length;
+    return `<div class="section-head"><h2>${esc(fmtLong.format(noon(sel)).replace(/^./, (c) => c.toUpperCase()))}</h2>
+        <p class="sub">${n ? `${n} match${n > 1 ? "s" : ""}${res.length ? ` · ${res.length} terminé${res.length > 1 ? "s" : ""}` : ""} · touchez un match pour l'analyse` : ""}</p></div>
+      <div class="date-tools">
+        <button class="nav-btn" id="day-prev" ${prev ? `data-day="${prev}"` : "disabled"} aria-label="Jour de match précédent">‹</button>
+        <label for="day-pick" class="sr-only">Choisir une date</label>
+        <input type="date" id="day-pick" value="${sel}" min="${keys[0]}" max="${keys[keys.length - 1]}">
+        <button class="nav-btn" id="day-next" ${next ? `data-day="${next}"` : "disabled"} aria-label="Jour de match suivant">›</button>
+        <button class="btn" id="day-today" data-day="${keys.find((k) => k >= today) || keys[keys.length - 1]}">Prochains matchs</button>
+      </div>
+      <div class="daybar" role="group" aria-label="Jours de match">${chips}</div>
+      ${body}`;
   }
 
   function viewClassement() {
@@ -493,6 +548,8 @@
       a.href = `#${state.slug}-${a.dataset.view}`;
     });
     app.innerHTML = renderers[state.view]();
+    const bar_ = app.querySelector(".daybar"), on = bar_?.querySelector(".on");
+    if (on) bar_.scrollLeft = on.offsetLeft - bar_.clientWidth / 2 + on.clientWidth / 2;
   }
 
   async function load(slug) {
@@ -504,7 +561,7 @@
   }
 
   async function go(slug, view, { push = true } = {}) {
-    if (slug !== state.slug) { state.team = state.home = state.away = null; state.club = ""; }
+    if (slug !== state.slug) { state.team = state.home = state.away = state.date = null; state.club = ""; }
     state.slug = slug; state.view = view;
     store.set("foot.league", slug);
     if (push && location.hash !== `#${slug}-${view}`) history.replaceState(null, "", `#${slug}-${view}`);
@@ -523,6 +580,8 @@
   document.addEventListener("click", (e) => {
     const v = e.target.closest("#views a");
     if (v) { e.preventDefault(); return go(state.slug, v.dataset.view); }
+    const dd = e.target.closest("[data-day]");
+    if (dd) { state.date = dd.dataset.day; render(); return; }
     const m = e.target.closest("[data-home][data-away]");
     if (m) { state.home = m.dataset.home; state.away = m.dataset.away; return go(state.slug, "analyse"); }
     const t = e.target.closest("[data-team]");
@@ -533,6 +592,7 @@
   });
   document.addEventListener("change", (e) => {
     if (e.target.id === "league-select") return go(e.target.value, state.view);
+    if (e.target.id === "day-pick") { if (e.target.value) { state.date = e.target.value; render(); } return; }
     if (e.target.id === "sort-by") { state.sort = e.target.value; return render(); }
     if (e.target.id === "team-pick") { state.team = e.target.value; return render(); }
     if (e.target.id === "club") { state.club = e.target.value; return render(); }
