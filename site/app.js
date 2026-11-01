@@ -652,11 +652,20 @@
   }
 
   async function load(slug) {
-    if (!state.data[slug]) {
-      const r = await fetch(`data/${slug}.json`, { cache: "no-cache" });
-      if (!r.ok) throw new Error(`data/${slug}.json introuvable`);
-      state.data[slug] = await r.json();
+    if (state.data[slug]) return;
+    let last;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(`data/${slug}.json`, { cache: attempt ? "reload" : "no-cache" });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        state.data[slug] = await r.json();
+        return;
+      } catch (e) {
+        last = e;
+        await new Promise((res) => setTimeout(res, 600 * (attempt + 1)));
+      }
     }
+    throw last;
   }
 
   async function go(slug, view, { push = true } = {}) {
@@ -664,7 +673,13 @@
     state.slug = slug; state.view = view;
     store.set("foot.league", slug);
     if (push && location.hash !== `#${slug}-${view}`) history.replaceState(null, "", `#${slug}-${view}`);
-    try { await load(slug); render(); } catch (e) { app.innerHTML = `<p class="empty">Impossible de charger les données : ${esc(e.message)}.</p>`; }
+    try { await load(slug); render(); } catch (e) {
+      const lg = state.meta.leagues.find((l) => l.slug === slug);
+      document.getElementById("league-select").value = slug;
+      document.getElementById("season").textContent = lg ? `${lg.name} ${lg.season}` : "";
+      app.innerHTML = `<div class="warn">Les données de ${esc(lg?.name || slug)} n'ont pas pu être chargées (connexion interrompue ou mise à jour en cours).</div>
+        <div><button class="btn" id="retry">Réessayer</button></div>`;
+    }
     if (state.view === "direct") startLive(); else stopLive();
     window.scrollTo({ top: 0 });
   }
@@ -681,6 +696,7 @@
     const v = e.target.closest("#views a");
     if (v) { e.preventDefault(); return go(state.slug, v.dataset.view); }
     if (e.target.closest("#live-refresh")) { fetchLive(); return; }
+    if (e.target.closest("#retry")) { go(state.slug, state.view); return; }
     const dd = e.target.closest("[data-day]");
     if (dd) { state.date = dd.dataset.day; render(); return; }
     const m = e.target.closest("[data-home][data-away]");
