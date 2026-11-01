@@ -44,18 +44,20 @@ def dc_tau(x: int, y: int, lh: float, la: float, rho: float) -> float:
     return 1.0
 
 
-def score_matrix(lh: float, la: float, rho: float = 0.0) -> list[list[float]]:
+def score_matrix(lh: float, la: float, rho: float = 0.0, draw_k: float = 1.0) -> list[list[float]]:
+    """Probabilité de chaque score. draw_k > 1 renforce les nuls (calibré sur l'historique,
+    car le modèle de Poisson sous-estime légèrement les matchs nuls)."""
     ph = [poisson_pmf(i, lh) for i in range(MAX_GOALS + 1)]
     pa = [poisson_pmf(j, la) for j in range(MAX_GOALS + 1)]
-    mat = [[ph[i] * pa[j] * dc_tau(i, j, lh, la, rho) for j in range(MAX_GOALS + 1)]
-           for i in range(MAX_GOALS + 1)]
+    mat = [[ph[i] * pa[j] * dc_tau(i, j, lh, la, rho) * (draw_k if i == j else 1.0)
+            for j in range(MAX_GOALS + 1)] for i in range(MAX_GOALS + 1)]
     total = sum(sum(r) for r in mat)
     return [[v / total for v in r] for r in mat]
 
 
-def markets(lh: float, la: float, rho: float = 0.0) -> dict:
+def markets(lh: float, la: float, rho: float = 0.0, draw_k: float = 1.0) -> dict:
     """Toutes les probabilités utiles pour un match."""
-    mat = score_matrix(lh, la, rho)
+    mat = score_matrix(lh, la, rho, draw_k)
     n = len(mat)
     p_home = sum(mat[i][j] for i in range(n) for j in range(n) if i > j)
     p_draw = sum(mat[i][i] for i in range(n))
@@ -66,6 +68,11 @@ def markets(lh: float, la: float, rho: float = 0.0) -> dict:
 
     btts = sum(mat[i][j] for i in range(1, n) for j in range(1, n))
     scores = sorted(((mat[i][j], f"{i}-{j}") for i in range(n) for j in range(n)), reverse=True)
+    best = {}
+    for p, sc in scores:  # score le plus probable pour chaque issue
+        i, j = (int(x) for x in sc.split("-"))
+        key = "home" if i > j else "draw" if i == j else "away"
+        best.setdefault(key, {"score": sc, "p": round(p, 4)})
     return {
         "xg_home": round(lh, 2),
         "xg_away": round(la, 2),
@@ -79,6 +86,7 @@ def markets(lh: float, la: float, rho: float = 0.0) -> dict:
         "home_clean_sheet": round(sum(mat[i][0] for i in range(n)), 4),
         "away_clean_sheet": round(sum(mat[0][j] for j in range(n)), 4),
         "top_scores": [{"score": s, "p": round(p, 4)} for p, s in scores[:6]],
+        "best_by_outcome": best,
     }
 
 
@@ -86,7 +94,8 @@ def markets(lh: float, la: float, rho: float = 0.0) -> dict:
 
 def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | None = None,
                   decay: float = DECAY_PER_DAY, prior: float = PRIOR_MATCHES,
-                  iterations: int = 60, fit_rho: bool = True, xg_weight: float | None = None) -> dict:
+                  iterations: int = 60, fit_rho: bool = True, xg_weight: float | None = None,
+                  fit_draw: bool = True) -> dict:
     """Estime attaque/défense de chaque équipe (modèle de Maher pondéré dans le temps).
 
     lambda_dom = mu_dom * att[dom] * def[ext]
@@ -163,10 +172,39 @@ def fit_strengths(matches: list[dict], ref_date: datetime, teams: list[str] | No
                 best = (ll, r)
         rho = best[1]
 
+    draw_k = fit_draw_k(rows, mu_home, mu_away, att, dfn, rho, ref_date) if fit_draw else 1.0
+
     return {"mu_home": round(mu_home, 4), "mu_away": round(mu_away, 4), "rho": rho,
+            "draw_k": draw_k,
             "n_matches": len(rows),
             "att": {t: round(v, 4) for t, v in att.items()},
             "def": {t: round(v, 4) for t, v in dfn.items()}}
+
+
+def fit_draw_k(rows, mu_home, mu_away, att, dfn, rho, ref_date, window_days: int = 400) -> float:
+    """Coefficient des nuls qui maximise la vraisemblance des résultats 1N2 récents."""
+    base = []
+    for h, a, _, _, w, hg, ag in rows:
+        if w < math.exp(-DECAY_PER_DAY * window_days):
+            continue
+        mat = score_matrix(mu_home * att[h] * dfn[a], mu_away * att[a] * dfn[h], rho)
+        n = len(mat)
+        ph = sum(mat[i][j] for i in range(n) for j in range(i))
+        pd = sum(mat[i][i] for i in range(n))
+        out = 0 if hg > ag else 1 if hg == ag else 2
+        base.append((ph, pd, 1 - ph - pd, out, w))
+    if len(base) < 100:
+        return 1.0
+    best = (-math.inf, 1.0)
+    for step in range(0, 41):
+        k = 0.8 + step * 0.02
+        ll = 0.0
+        for ph, pd, pa, out, w in base:
+            z = ph + k * pd + pa
+            ll += w * math.log(max((ph, k * pd, pa)[out] / z, 1e-12))
+        if ll > best[0]:
+            best = (ll, k)
+    return round(best[1], 2)
 
 
 def _normalise(d: dict) -> None:
@@ -186,7 +224,7 @@ def expected_goals(params: dict, home: str, away: str) -> tuple[float, float]:
 
 def predict(params: dict, home: str, away: str) -> dict:
     lh, la = expected_goals(params, home, away)
-    return markets(lh, la, params.get("rho", 0.0))
+    return markets(lh, la, params.get("rho", 0.0), params.get("draw_k", 1.0))
 
 
 # --------------------------------------------------------------------------- Elo

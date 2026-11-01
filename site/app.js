@@ -33,11 +33,11 @@
     if (x === 1 && y === 1) return 1 - rho;
     return 1;
   }
-  function markets(lh, la, rho) {
+  function markets(lh, la, rho, drawK = 1) {
     const m = []; let tot = 0;
     for (let i = 0; i <= MAX_GOALS; i++) {
       m.push([]);
-      for (let j = 0; j <= MAX_GOALS; j++) { const v = pois(i, lh) * pois(j, la) * tau(i, j, lh, la, rho); m[i].push(v); tot += v; }
+      for (let j = 0; j <= MAX_GOALS; j++) { const v = pois(i, lh) * pois(j, la) * tau(i, j, lh, la, rho) * (i === j ? drawK : 1); m[i].push(v); tot += v; }
     }
     let h = 0, d = 0, o15 = 0, o25 = 0, o35 = 0, btts = 0, csh = 0, csa = 0; const scores = [];
     for (let i = 0; i <= MAX_GOALS; i++) for (let j = 0; j <= MAX_GOALS; j++) {
@@ -48,14 +48,20 @@
       scores.push({ score: `${i}-${j}`, p: v });
     }
     scores.sort((a, b) => b.p - a.p);
+    const best = {};
+    for (const sc of scores) {
+      const [i, j] = sc.score.split("-").map(Number);
+      const k = i > j ? "home" : i === j ? "draw" : "away";
+      if (!best[k]) best[k] = sc;
+    }
     return { xg_home: lh, xg_away: la, p_home: h, p_draw: d, p_away: 1 - h - d, over15: o15, over25: o25, over35: o35,
-      btts, home_clean_sheet: csh, away_clean_sheet: csa, top_scores: scores.slice(0, 6), matrix: m };
+      btts, home_clean_sheet: csh, away_clean_sheet: csa, top_scores: scores.slice(0, 6), best_by_outcome: best, matrix: m };
   }
   function predict(home, away) {
     const p = D().model;
     const lh = p.mu_home * (p.att[home] ?? 1) * (p.def[away] ?? 1);
     const la = p.mu_away * (p.att[away] ?? 1) * (p.def[home] ?? 1);
-    return markets(lh, la, p.rho || 0);
+    return markets(lh, la, p.rho || 0, p.draw_k || 1);
   }
 
   // ------------------------------------------------------------------ composants
@@ -68,6 +74,12 @@
     return `<div class="bar" role="img" aria-label="Victoire domicile ${pct(p.p_home)}, nul ${pct(p.p_draw)}, victoire extérieur ${pct(p.p_away)}">
       <span class="h" style="width:${w(p.p_home)}">${lab(p.p_home)}</span><span class="d" style="width:${w(p.p_draw)}">${lab(p.p_draw)}</span><span class="a" style="width:${w(p.p_away)}">${lab(p.p_away)}</span></div>
       <div class="bar-legend"><span>1 · domicile</span><span>N</span><span>extérieur · 2</span></div>`;
+  }
+
+  // Score le plus probable DANS l'issue la plus probable (évite le "1-1" systématique)
+  function likelyScore(p) {
+    const o = [["home", p.p_home], ["draw", p.p_draw], ["away", p.p_away]].sort((a, b) => b[1] - a[1])[0][0];
+    return p.best_by_outcome?.[o] || p.top_scores[0];
   }
 
   function pickLabel(p, home, away) {
@@ -113,7 +125,7 @@
           ${bar(p)}
           ${m.market ? marketLine(p, m.market, m.home, m.away) : ""}
           <div class="chips"><span class="chip pick">${esc(pickLabel(p, m.home, m.away))}</span>
-            <span class="chip">Score probable <b>${p.top_scores[0].score}</b></span>
+            <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
             <span class="chip">+2,5 buts <b>${pct(p.over25)}</b></span>
             <span class="chip">Les deux marquent <b>${pct(p.btts)}</b></span></div>
         </button>`;
@@ -286,6 +298,7 @@
         ${bar(p)}
         ${fixture?.market ? marketLine(p, fixture.market, h, a) : ""}
         <div class="chips"><span class="chip pick">${esc(pickLabel(p, h, a))}</span>
+          <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
           <span class="chip">Buts attendus <b>${num(p.xg_home)} – ${num(p.xg_away)}</b></span>
           <span class="chip">Cote juste 1/N/2 <b>${num(1 / p.p_home)} · ${num(1 / p.p_draw)} · ${num(1 / p.p_away)}</b></span></div>
       </section>
@@ -293,8 +306,13 @@
         <section class="panel"><h3>Marchés</h3><div class="markets">
           ${mk("Plus de 1,5 but", p.over15)}${mk("Plus de 2,5 buts", p.over25)}${mk("Plus de 3,5 buts", p.over35)}
           ${mk("Les deux équipes marquent", p.btts)}${mk(`${esc(nm(h))} ne prend pas de but`, p.home_clean_sheet)}${mk(`${esc(nm(a))} ne prend pas de but`, p.away_clean_sheet)}</div>${extra}</section>
-        <section class="panel"><h3>Scores les plus probables</h3><div class="markets">
-          ${p.top_scores.map((s) => mk(`${esc(nm(h))} ${s.score} ${esc(nm(a))}`, s.p)).join("")}</div></section>
+        <section class="panel"><h3>Scores les plus probables</h3>
+          <div class="outcome-scores">
+            <div><span class="k">Si ${esc(nm(h))} gagne</span><b>${p.best_by_outcome.home?.score ?? "–"}</b></div>
+            <div><span class="k">Si match nul</span><b>${p.best_by_outcome.draw?.score ?? "–"}</b></div>
+            <div><span class="k">Si ${esc(nm(a))} gagne</span><b>${p.best_by_outcome.away?.score ?? "–"}</b></div></div>
+          <div class="markets">${p.top_scores.map((s) => mk(`${esc(nm(h))} ${s.score} ${esc(nm(a))}`, s.p)).join("")}</div>
+          <p class="note">Un score exact pris seul est toujours peu probable (rarement plus de 15 %). Le 1-1 ressort souvent en tête parce qu'un nul se joue sur 3 scores (0-0, 1-1, 2-2), alors qu'une victoire se répartit sur beaucoup de scores (1-0, 2-0, 2-1, 3-1…). Pour savoir qui gagne, fiez-vous aux pourcentages 1 / N / 2.</p></section>
       </div>
       <section class="panel"><div class="section-head"><h3>Probabilité de chaque score (%)</h3><span class="sub">lignes : ${esc(nm(h))} · colonnes : ${esc(nm(a))}</span></div>
         <div style="overflow-x:auto">${heat}</div></section>
