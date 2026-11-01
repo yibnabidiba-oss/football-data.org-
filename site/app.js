@@ -1,10 +1,10 @@
 /* Analyse Foot — interface (aucune dépendance). Les données viennent de data/*.json. */
 (() => {
   "use strict";
-  const VIEWS = ["matchs", "classement", "equipes", "analyse", "fiabilite"];
+  const VIEWS = ["matchs", "classement", "equipes", "joueurs", "analyse", "fiabilite"];
   const MAX_GOALS = 10;
   const app = document.getElementById("app");
-  const state = { meta: null, slug: null, view: "matchs", data: {}, team: null, home: null, away: null };
+  const state = { meta: null, slug: null, view: "matchs", data: {}, team: null, home: null, away: null, sort: "goals", club: "" };
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -102,6 +102,54 @@
     return `<div class="mkt"><span>Bookmakers</span><b>${r(o.p_home)} % · ${r(o.p_draw)} % · ${r(o.p_away)} %</b></div>${edge ? `<div class="chips">${edge}</div>` : ""}`;
   }
 
+  const POS = { GK: "G", D: "D", M: "M", F: "A", S: "R" };
+  const rk = (r) => r ? `<small class="rank">${r}<sup>e</sup></small>` : "";
+
+  function absentNames(t, max = 2) {
+    const a = D().team_stats[t]?.absent?.missing || [];
+    return a.slice(0, max).map((x) => x.name.split(" ").slice(-1)[0]).join(", ") + (a.length > max ? "…" : "");
+  }
+
+  function spark(vals) {
+    if (!vals || vals.length < 2) return "";
+    const W = 120, H = 34, m = Math.max(1, ...vals.map(Math.abs));
+    const x = (i) => 3 + i * (W - 6) / (vals.length - 1), y = (v) => H / 2 - v / m * (H / 2 - 3);
+    const bars = vals.map((v, i) => `<rect x="${(x(i) - 4).toFixed(1)}" y="${Math.min(y(v), H / 2).toFixed(1)}" width="8" height="${Math.max(Math.abs(y(v) - H / 2), 1).toFixed(1)}" rx="1.5" fill="var(${v >= 0 ? "--win" : "--loss"})"/>`).join("");
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Différence de xG des derniers matchs"><line x1="0" x2="${W}" y1="${H / 2}" y2="${H / 2}" stroke="var(--line)"/>${bars}</svg>`;
+  }
+
+  function advBlock(a) {
+    if (!a) return "";
+    const n = D().season_teams.length;
+    const luck = a.pts - a.xpts;
+    const item = (k, v, r, note) => `<div class="adv"><div class="v">${v} ${rk(r)}</div><div class="k">${k}</div>${note ? `<div class="n">${note}</div>` : ""}</div>`;
+    return `<div class="sub-block"><div class="eyebrow">Indicateurs avancés · rang sur ${n}</div>
+      <div class="adv-grid">
+        ${item("xG créés / match", num(a.xg), a.rank_xg)}
+        ${item("xG concédés / match", num(a.xga), a.rank_xga)}
+        ${item("PPDA (pressing)", a.ppda != null ? num(a.ppda, 1) : "–", a.rank_ppda, "plus bas = pressing plus intense")}
+        ${item("Passes dans les 20 m / match", num(a.deep, 1), a.rank_deep, `${num(a.deep_allowed, 1)} concédées`)}
+        ${item("Points attendus (xPts)", num(a.xpts, 1), a.rank_xpts, `${a.pts} pts réels · ${luck >= 0 ? "+" : ""}${num(luck, 1)}`)}
+        ${item("Finition : buts − xG", (a.goals_minus_xg >= 0 ? "+" : "") + num(a.goals_minus_xg, 1), null, a.goals_minus_xg >= 0 ? "marque plus que prévu" : "marque moins que prévu")}
+      </div>
+      <div class="trend-row"><div><b>Forme xG</b> <span class="muted">(xG créés − concédés, 10 derniers matchs)</span><br>
+        5 derniers : <b>${a.xgd_last5 >= 0 ? "+" : ""}${num(a.xgd_last5)}</b> / match · saison : ${a.xgd_season >= 0 ? "+" : ""}${num(a.xgd_season)}</div>${spark(a.xg_trend)}</div>
+      <p class="note">${luck > 3 ? "Beaucoup plus de points que ce que ses occasions laissent attendre : risque de baisse de résultats." : luck < -3 ? "Moins de points que ce que ses occasions laissent attendre : les résultats pourraient s'améliorer." : "Points réels proches des points attendus : résultats cohérents avec le jeu produit."}</p></div>`;
+  }
+
+  function playersBlock(list, absent) {
+    if (!list || !list.length) return "";
+    const miss = new Set((absent?.missing || []).map((m) => m.name));
+    const rows = list.slice(0, 10).map((p) => `<tr class="${miss.has(p.name) ? "is-absent" : ""}"><td class="l"><b>${esc(p.name)}</b>${miss.has(p.name) ? ' <span class="tag-abs">absent</span>' : ""}<br><small class="muted">${POS[p.pos] || p.pos} · ${p.min} min · ${p.shots} tirs · ${p.kp} passes clés</small></td>
+      <td>${p.goals}<br><small class="muted">${num(p.xg, 1)}</small></td><td>${p.assists}<br><small class="muted">${num(p.xa, 1)}</small></td>
+      <td><b>${pct(p.share)}</b></td></tr>`).join("");
+    const abs = absent?.missing?.length
+      ? `<div class="warn">Absent${absent.missing.length > 1 ? "s" : ""} au dernier match (${shortDate(absent.last_match)}) : <b>${absent.missing.map((m) => esc(m.name)).join(", ")}</b>. Blessure, suspension ou repos : à vérifier avant le match.</div>` : "";
+    return `<div class="sub-block"><div class="eyebrow">Joueurs clés</div>${abs}
+      <div class="scroll" style="border:0"><table class="players"><thead><tr><th class="l">Joueur</th><th>Buts<br><small>xG</small></th><th>Passes D<br><small>xA</small></th><th>Part</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="note">« Part » : part des occasions de l'équipe (xG hors penalty + xA) impliquant le joueur.</p></div>`;
+  }
+
   // ------------------------------------------------------------------ vues
   function viewMatchs() {
     const d = D();
@@ -124,6 +172,7 @@
             <span class="team away">${esc(nm(m.away))}</span></div>
           ${bar(p)}
           ${m.market ? marketLine(p, m.market, m.home, m.away) : ""}
+          ${absentNames(m.home) || absentNames(m.away) ? `<div class="abs-line">Absents au dernier match : ${[absentNames(m.home) && `${esc(nm(m.home))} (${esc(absentNames(m.home))})`, absentNames(m.away) && `${esc(nm(m.away))} (${esc(absentNames(m.away))})`].filter(Boolean).join(" · ")}</div>` : ""}
           <div class="chips"><span class="chip pick">${esc(pickLabel(p, m.home, m.away))}</span>
             <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
             <span class="chip">+2,5 buts <b>${pct(p.over25)}</b></span>
@@ -196,6 +245,8 @@
       <p class="note">Indices : 100 = moyenne du championnat. 130 en attaque = marque environ 30 % de plus qu'une équipe moyenne face au même adversaire.</p>
       <div class="scroll"><table><thead><tr><th class="l"></th><th>J</th><th>V-N-D</th><th>Buts</th><th>Pts/m</th><th>+2,5</th><th>2 marquent</th><th>Sans encaisser</th></tr></thead><tbody>
         ${row("Total", s.all)}${row("Domicile", s.home)}${row("Extérieur", s.away)}${row("5 derniers", s.last5)}</tbody></table></div>
+      ${playersBlock(s.players, s.absent)}
+      ${advBlock(s.adv)}
       ${gameBlock(s.game)}
       ${pastBlock(s.past)}
       <div class="formlist"><div class="eyebrow">Derniers matchs</div>${form || '<p class="empty">Aucun match joué.</p>'}</div>
@@ -228,6 +279,16 @@
       <p class="note">« – » : l'équipe jouait dans une autre division cette saison-là.</p></div>`;
   }
 
+  function keyPlayers(t) {
+    const s = D().team_stats[t], list = s.players || [];
+    if (!list.length) return `<p class="empty">Stats joueurs indisponibles.</p>`;
+    const miss = new Set((s.absent?.missing || []).map((m) => m.name));
+    const rows = list.slice(0, 5).map((p) => `<div class="kp ${miss.has(p.name) ? "is-absent" : ""}"><span><b>${esc(p.name)}</b>${miss.has(p.name) ? ' <span class="tag-abs">absent</span>' : ""}<br><small class="muted">${p.goals} but${p.goals > 1 ? "s" : ""} (${num(p.xg, 1)} xG) · ${p.assists} passe${p.assists > 1 ? "s" : ""} D (${num(p.xa, 1)} xA)</small></span><b>${pct(p.share)}</b></div>`).join("");
+    const lost = (s.absent?.missing || []).reduce((acc, m) => acc + m.share, 0);
+    return `${s.absent?.missing?.length ? `<div class="warn">Absents au dernier match : <b>${s.absent.missing.map((m) => esc(m.name)).join(", ")}</b>${lost >= 0.1 ? ` · ${pct(lost)} des occasions de l'équipe` : ""}. Le pronostic ne tient pas compte des absences : à vérifier.</div>` : ""}
+      <div class="kps">${rows}</div><p class="note">Pourcentage : part des occasions de l'équipe (xG + xA).</p>`;
+  }
+
   function h2hBlock(h, a) {
     const d = D();
     const all = d.h2h.filter((r) => (r[1] === h && r[2] === a) || (r[1] === a && r[2] === h));
@@ -249,6 +310,25 @@
         <div class="a"><div class="v">${wa}</div><div class="k">${esc(nm(a))}</div></div></div>
       <p class="note">${n} matchs depuis ${since} · ${num(goals / n, 1)} buts par match · +2,5 buts : ${pct(o25 / n)} · les deux marquent : ${pct(btts / n)}${vn ? ` · chez ${esc(nm(h))} : ${vh} V, ${vd} N, ${va} D` : ""}.</p>
       <div class="h2h">${list}</div><p class="note">Entre parenthèses : score à la mi-temps.</p>`;
+  }
+
+  function viewJoueurs() {
+    const d = D(), L = d.leaders || [];
+    if (!L.length) return `<h2>Joueurs</h2><p class="empty">Stats joueurs indisponibles pour l'instant.</p>`;
+    const cols = [["goals", "Buts"], ["xg", "xG"], ["assists", "Passes D"], ["xa", "xA"], ["g_minus_xg", "Buts − xG"], ["xg90", "xG / 90 min"], ["kp", "Passes clés"]];
+    const key = cols.some((c) => c[0] === state.sort) ? state.sort : "goals";
+    const list = L.filter((p) => !state.club || p.team === state.club)
+      .filter((p) => key !== "xg90" || p.min >= 450)
+      .sort((a, b) => (b[key] ?? -99) - (a[key] ?? -99) || b.xg - a.xg).slice(0, 30);
+    const clubs = [...d.season_teams].sort((a, b) => nm(a).localeCompare(nm(b), "fr"));
+    const fmt = (p, k) => k === "xg" || k === "xa" || k === "xg90" ? num(p[k] ?? 0) : k === "g_minus_xg" ? (p[k] >= 0 ? "+" : "") + num(p[k], 1) : p[k];
+    const rows = list.map((p, i) => `<tr class="clickable" data-team="${p.team}"><td class="l pos">${i + 1}</td><td class="l"><b>${esc(p.name)}</b><br><small class="muted">${esc(nm(p.team))} · ${POS[p.pos] || p.pos} · ${p.min} min</small></td>
+      ${cols.map(([k]) => `<td class="${k === key ? "sorted" : ""}">${fmt(p, k)}</td>`).join("")}</tr>`).join("");
+    return `<div class="section-head"><h2>Joueurs</h2><p class="sub">Saison ${d.season} · source understat.com</p></div>
+      <div class="filters"><label for="sort-by">Trier par<select id="sort-by">${cols.map(([k, l]) => `<option value="${k}" ${k === key ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label for="club">Équipe<select id="club"><option value="">Toutes</option>${clubs.map((t) => `<option value="${t}" ${t === state.club ? "selected" : ""}>${esc(nm(t))}</option>`).join("")}</select></label></div>
+      <div class="scroll"><table><thead><tr><th class="l">#</th><th class="l">Joueur</th>${cols.map(([k, l]) => `<th class="${k === key ? "sorted" : ""}">${l}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="note">xG : qualité des tirs (probabilité de marquer). xA : qualité des passes ayant mené à un tir. Buts − xG positif : le joueur marque plus que ses occasions ne le laissent attendre (bonne finition, ou réussite qui peut retomber). Le xG / 90 min ne compte que les joueurs avec au moins 450 minutes.</p>`;
   }
 
   function viewAnalyse() {
@@ -324,13 +404,22 @@
           <tr><td class="l">Pts/match (dom. / ext.)</td><td>${num(sh.home.ppg)}</td><td>${num(sa.away.ppg)}</td></tr>
           <tr><td class="l">Buts marqués/match</td><td>${num(sh.home.gf_avg)}</td><td>${num(sa.away.gf_avg)}</td></tr>
           <tr><td class="l">Buts encaissés/match</td><td>${num(sh.home.ga_avg)}</td><td>${num(sa.away.ga_avg)}</td></tr>
-          ${gRow("xG pour / match", "xg_for", 2)}${gRow("xG contre / match", "xg_against", 2)}
+          ${sh.adv && sa.adv ? `
+          <tr><td class="l">xG créés / match</td><td>${num(sh.adv.xg)} ${rk(sh.adv.rank_xg)}</td><td>${num(sa.adv.xg)} ${rk(sa.adv.rank_xg)}</td></tr>
+          <tr><td class="l">xG concédés / match</td><td>${num(sh.adv.xga)} ${rk(sh.adv.rank_xga)}</td><td>${num(sa.adv.xga)} ${rk(sa.adv.rank_xga)}</td></tr>
+          <tr><td class="l">Forme xG (5 derniers)</td><td>${sh.adv.xgd_last5 >= 0 ? "+" : ""}${num(sh.adv.xgd_last5)}</td><td>${sa.adv.xgd_last5 >= 0 ? "+" : ""}${num(sa.adv.xgd_last5)}</td></tr>
+          <tr><td class="l">PPDA (pressing)</td><td>${num(sh.adv.ppda, 1)} ${rk(sh.adv.rank_ppda)}</td><td>${num(sa.adv.ppda, 1)} ${rk(sa.adv.rank_ppda)}</td></tr>
+          <tr><td class="l">Points réels / attendus</td><td>${sh.adv.pts} / ${num(sh.adv.xpts, 0)}</td><td>${sa.adv.pts} / ${num(sa.adv.xpts, 0)}</td></tr>` : `${gRow("xG pour / match", "xg_for", 2)}${gRow("xG contre / match", "xg_against", 2)}`}
           ${gRow("Tirs cadrés / match", "sot_for")}${gRow("Corners / match", "corners_for")}${gRow("Cartons jaunes / match", "yellow_for", 2)}
         </tbody></table></div>
         <div class="formlist"><div class="eyebrow">Forme (5 derniers matchs)</div>
           <div><span>${esc(nm(h))}</span><span></span>${formChips(sh.form)}</div>
           <div><span>${esc(nm(a))}</span><span></span>${formChips(sa.form)}</div></div><p class="note">Points et buts : stats « domicile » pour ${esc(nm(h))}, « extérieur » pour ${esc(nm(a))}. Stats de jeu : toute la saison.</p></section>
         <section class="panel"><h3>Face-à-face</h3>${h2hBlock(h, a)}</section>
+      </div>
+      <div class="grid2">
+        <section class="panel"><h3>${esc(nm(h))} · joueurs clés</h3>${keyPlayers(h)}</section>
+        <section class="panel"><h3>${esc(nm(a))} · joueurs clés</h3>${keyPlayers(a)}</section>
       </div>`;
   }
 
@@ -387,7 +476,7 @@
   }
 
   // ------------------------------------------------------------------ rendu et navigation
-  const renderers = { matchs: viewMatchs, classement: viewClassement, equipes: viewEquipes, analyse: viewAnalyse, fiabilite: viewFiabilite };
+  const renderers = { matchs: viewMatchs, classement: viewClassement, equipes: viewEquipes, joueurs: viewJoueurs, analyse: viewAnalyse, fiabilite: viewFiabilite };
 
   function render() {
     const d = D();
@@ -411,7 +500,7 @@
   }
 
   async function go(slug, view, { push = true } = {}) {
-    if (slug !== state.slug) { state.team = state.home = state.away = null; }
+    if (slug !== state.slug) { state.team = state.home = state.away = null; state.club = ""; }
     state.slug = slug; state.view = view;
     store.set("foot.league", slug);
     if (push && location.hash !== `#${slug}-${view}`) history.replaceState(null, "", `#${slug}-${view}`);
@@ -441,6 +530,8 @@
     if (e.target.closest("#swap")) { [state.home, state.away] = [state.away, state.home]; render(); }
   });
   document.addEventListener("change", (e) => {
+    if (e.target.id === "sort-by") { state.sort = e.target.value; return render(); }
+    if (e.target.id === "club") { state.club = e.target.value; return render(); }
     if (e.target.id === "sel-home") state.home = e.target.value;
     else if (e.target.id === "sel-away") state.away = e.target.value;
     else return;

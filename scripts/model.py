@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 MAX_GOALS = 10          # taille de la matrice des scores
 DECAY_PER_DAY = 0.002   # pondération temporelle (demi-vie ~ 350 jours, réglé sur 2024-26)
 PRIOR_MATCHES = 3.0     # régularisation vers la moyenne (en "matchs fictifs")
-XG_WEIGHT = 0.5         # part des xG dans la cible quand ils sont disponibles
+XG_WEIGHT = 0.7         # part des xG dans la cible quand ils sont disponibles (réglé sur 2024-26)
 HISTORY_DAYS = 3 * 365  # matchs pris en compte pour estimer les forces
 
 

@@ -8,6 +8,7 @@ Application web d'analyse des matchs : pronostics, classements, fiches équipes,
 |---|---|---|
 | [football-data.org](https://www.football-data.org) | Saison en cours : calendrier, résultats, classement officiel | gratuite, obligatoire |
 | [football-data.co.uk](https://www.football-data.co.uk) | 10 saisons : résultats, score à la mi-temps, tirs, tirs cadrés, corners, fautes, cartons, xG (saison en cours), cotes des bookmakers, prochains matchs avec cotes | aucune |
+| [understat.com](https://understat.com) | 4 saisons : xG par match, PPDA (pressing), passes dans les 20 derniers mètres, points attendus ; stats des joueurs (minutes, buts, xG, passes décisives, xA, tirs, passes clés) ; compositions des derniers matchs | aucune |
 
 Les deux sources sont reliées automatiquement : les noms d'équipes sont associés en comparant les matchs communs (même jour, même score).
 
@@ -17,15 +18,18 @@ Les deux sources sont reliées automatiquement : les noms d'équipes sont associ
 |---|---|
 | **Pronostics** | Matchs des 14 prochains jours : probabilités 1 / N / 2, buts attendus, score le plus probable, +2,5 buts, « les deux marquent », probabilités des bookmakers et écarts avec le modèle |
 | **Classement** | Classement officiel, forme sur 5 matchs, tendances du championnat (buts, xG, tirs, corners, cartons par match…) |
-| **Équipes** | Classement de puissance (Elo sur 10 saisons), indices d'attaque et de défense, stats domicile / extérieur, stats de jeu (xG, tirs, corners, cartons, mi-temps), classement final des 10 dernières saisons |
-| **Analyse match** | N'importe quelle affiche : probabilités, marchés, grille des scores, cotes « justes », corners et cartons attendus, comparaison des stats de jeu, face-à-face sur 10 saisons avec score à la mi-temps |
+| **Joueurs** | Classement des joueurs du championnat, triable par buts, xG, passes décisives, xA, finition (buts − xG), xG par 90 minutes, passes clés ; filtre par équipe |
+| **Équipes** | Classement de puissance (Elo sur 10 saisons), indices d'attaque et de défense, stats domicile / extérieur, joueurs clés et part des occasions de chacun, absents du dernier match, indicateurs avancés (xG, PPDA, deep, points attendus, finition, forme xG), stats de jeu, classement final des 10 dernières saisons |
+| **Analyse match** | N'importe quelle affiche : probabilités, marchés, grille des scores, cotes « justes », corners et cartons attendus, score probable selon chaque issue, comparaison des indicateurs avancés, joueurs clés et absences des deux équipes, face-à-face sur 10 saisons avec score à la mi-temps |
 | **Fiabilité** | Test du modèle sur la saison en cours et sur toute la saison passée, comparé aux bookmakers |
 
 ### Le modèle
 
 - **Poisson / Dixon-Coles** : chaque équipe reçoit une force d'attaque et de défense, estimée sur les 3 dernières saisons (les matchs récents comptent davantage, et les xG sont pris en compte quand ils existent). On en déduit les buts attendus de chaque équipe, puis la probabilité de chaque score.
 - **Elo** : note de puissance calculée sur 10 saisons, mise à jour après chaque match, en tenant compte de l'écart de buts et de l'avantage du terrain.
-- Réglages choisis en testant le modèle sur les saisons 2024-25 et 2025-26 des trois championnats.
+- **Nuls calibrés** : le modèle de Poisson sous-estime légèrement les nuls ; un coefficient, réglé automatiquement sur l'historique récent de chaque championnat, corrige cet écart.
+- Réglages choisis en testant le modèle sur les saisons 2024-25 et 2025-26 des trois championnats (2 132 matchs).
+- **Absences** : un joueur important (au moins 15 % des occasions de son équipe, ou titulaire régulier) qui n'a pas joué le dernier match est signalé. La raison n'est pas connue (blessure, suspension, repos), et le pronostic n'en tient pas compte.
 - Les probabilités restent des estimations. Un modèle statistique de ce type trouve le bon résultat 1N2 dans environ 50 % des cas ; la rubrique Fiabilité montre le résultat réel.
 
 ## Mise en ligne (15 minutes, gratuit)
@@ -55,6 +59,8 @@ Sans clé, le site fonctionne quand même avec des données simulées (clubs fic
 scripts/fetch_data.py     récupération de la saison en cours (football-data.org)
 scripts/fetch_history.py  récupération de l'historique et des cotes (football-data.co.uk)
 scripts/history.py        lecture de l'historique, correspondance des équipes, stats de jeu
+scripts/fetch_understat.py récupération des stats avancées et joueurs (understat.com)
+scripts/understat.py      indicateurs avancés, joueurs, absences
 scripts/analyze.py        calcul des analyses → site/data/*.json
 scripts/model.py          modèle statistique (Poisson, Dixon-Coles, Elo, backtest)
 scripts/demo_data.py    données simulées pour tester sans clé
@@ -79,7 +85,7 @@ Dans `scripts/model.py` :
 
 - `DECAY_PER_DAY` : poids des matchs anciens (0,002 ≈ un match d'il y a un an compte deux fois moins).
 - `PRIOR_MATCHES` : prudence quand une équipe a peu de matchs (promus).
-- `XG_WEIGHT` : part des xG dans l'estimation des forces (0,5 = moitié buts réels, moitié xG).
+- `XG_WEIGHT` : part des xG dans l'estimation des forces (0,7 = 70 % xG, 30 % buts réels).
 - `HISTORY_DAYS` : profondeur d'historique utilisée pour les forces.
 
 Après un changement, la rubrique **Fiabilité** permet de vérifier si le modèle s'améliore (score de Brier plus bas = mieux).

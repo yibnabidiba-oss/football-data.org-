@@ -29,7 +29,7 @@ BASE = "https://understat.com"
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "understat"
 SEASONS_BACK = 3
-ROSTER_MATCHES = 3  # derniers matchs de chaque équipe dont on lit la composition
+ROSTER_MATCHES = 6  # derniers matchs de chaque équipe dont on lit la composition
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",

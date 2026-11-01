@@ -98,3 +98,29 @@ def test_elo_seasons_promoted_team_starts_low():
     s2 = [{"date": "2026-08-01T15:00:00Z", "home": "x", "away": "a", "hg": 0, "ag": 1}]
     r = model.elo_seasons([s1, s2])
     assert r["x"] < 1500 < r["a"]
+
+
+def test_understat_indicators_and_absences():
+    import understat
+    hist = lambda xg, xga, pts: {"h_a": "h", "xG": xg, "xGA": xga, "npxG": xg, "npxGA": xga,  # noqa: E731
+                                 "ppda": {"att": 200, "def": 20}, "ppda_allowed": {"att": 150, "def": 10},
+                                 "deep": 8, "deep_allowed": 4, "scored": 2, "missed": 1, "xpts": 1.5,
+                                 "pts": pts, "date": "2026-09-01 15:00:00"}
+    season = {"teams": {"1": {"id": "1", "title": "Alpha", "history": [hist(2.0, 1.0, 3)] * 4},
+                        "2": {"id": "2", "title": "Beta", "history": [hist(1.0, 2.0, 0)] * 4}},
+              "players": [
+                  {"id": "10", "player_name": "Buteur", "team_title": "Alpha", "games": "4", "time": "360",
+                   "goals": "4", "xG": "3", "npxG": "3", "assists": "0", "xA": "0.5", "shots": "12",
+                   "key_passes": "3", "xGChain": "4", "xGBuildup": "1", "yellow_cards": "0", "red_cards": "0", "position": "F"},
+                  {"id": "11", "player_name": "Milieu", "team_title": "Alpha", "games": "4", "time": "360",
+                   "goals": "0", "xG": "0.5", "npxG": "0.5", "assists": "1", "xA": "1", "shots": "3",
+                   "key_passes": "8", "xGChain": "2", "xGBuildup": "2", "yellow_cards": "1", "red_cards": "0", "position": "M"}]}
+    mapping = {"Alpha": "a", "Beta": "b"}
+    ind = understat.team_indicators(season, mapping, ["a", "b"])
+    assert ind["a"]["xg"] == 2.0 and ind["a"]["ppda"] == 10.0 and ind["a"]["rank_xg"] == 1
+    squad = understat.players(season, mapping, ["a", "b"])
+    assert squad["a"][0]["name"] == "Buteur" and abs(sum(p["share"] for p in squad["a"]) - 1) < 1e-2
+    rosters = {"99": {"date": "2026-09-05 15:00:00", "h": "1", "a": "2",
+                      "rosters": {"h": {"x": {"player_id": "11", "time": "90"}}, "a": {}}}}
+    ab = understat.absences(rosters, mapping, season, squad)
+    assert [m["name"] for m in ab["a"]["missing"]] == ["Buteur"]

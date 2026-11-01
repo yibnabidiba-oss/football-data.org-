@@ -262,3 +262,29 @@ tr.clickable:hover td { background: var(--chip); }
 .outcome-scores div { background: var(--chip); border-radius: 8px; padding: 8px 4px; display: grid; gap: 2px; }
 .outcome-scores .k { font-size: .72rem; color: var(--muted); line-height: 1.2; }
 .outcome-scores b { font-family: var(--display); font-size: 1.4rem; font-weight: 700; }
+
+/* ---------- joueurs et indicateurs avancés */
+.rank { color: var(--accent-ink); font-weight: 600; font-size: .68rem; font-family: var(--body); }
+.adv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 8px; }
+.adv { background: var(--chip); border-radius: 8px; padding: 8px 10px; }
+.adv .v { font-family: var(--display); font-size: 1.35rem; font-weight: 600; line-height: 1.1; }
+.adv .k { font-size: .75rem; color: var(--muted); }
+.adv .n { font-size: .7rem; color: var(--muted); margin-top: 2px; }
+.trend-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; font-size: .86rem; }
+.spark { width: 130px; height: 36px; flex: none; }
+.players td, .players th { vertical-align: top; }
+.players th small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.players td.l { white-space: normal; min-width: 0; width: 100%; }
+.players { table-layout: auto; }
+.players td, .players th { padding-inline: 6px; }
+.is-absent td, .kp.is-absent { opacity: .75; }
+.tag-abs { display: inline-block; font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--loss); border: 1px solid var(--loss); border-radius: 4px; padding: 0 4px; vertical-align: 1px; }
+.warn { border-left: 3px solid var(--loss); background: var(--chip); padding: 8px 10px; border-radius: 0 6px 6px 0; font-size: .84rem; }
+.abs-line { font-size: .76rem; color: var(--loss); margin-top: -4px; }
+.kps { display: grid; gap: 6px; }
+.kp { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: .9rem; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.kp:last-child { border-bottom: 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; }
+.filters label { display: grid; gap: 4px; font-size: .72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; flex: 1 1 160px; }
+.filters select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: .92rem; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink); }
+th.sorted, td.sorted { background: var(--chip); font-weight: 700; }

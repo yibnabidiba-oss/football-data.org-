@@ -4,6 +4,8 @@ Sources :
   data/raw/      football-data.org (saison en cours : calendrier, résultats, classement officiel)
   data/history/  football-data.co.uk (10 saisons : résultats, mi-temps, tirs, corners, cartons,
                  xG, cotes des bookmakers, prochains matchs avec cotes)
+  data/understat understat.com (4 saisons : xG par match, PPDA, deep, points attendus,
+                 stats des joueurs, compositions des derniers matchs)
 
 Usage : python scripts/analyze.py [--demo]
 """
@@ -17,6 +19,7 @@ from pathlib import Path
 
 import history
 import model
+import understat
 from leagues import LEAGUES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -95,6 +98,14 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
                 if tid not in teams:
                     nm = r[side + "_name"]
                     teams[tid] = {"name": nm, "short": nm, "tla": nm[:3].upper(), "crest": ""}
+    # ---- understat : xG des saisons passées, indicateurs avancés, joueurs
+    us = {} if demo else understat.load(code)
+    us_map = understat.build_mapping(us, all_rows + season) if us else {}
+    if us:
+        for m in season:
+            m["season"] = cur_year
+        understat.attach_xg(all_rows, us, us_map)
+
     past_years = sorted(y for y in seasons_h if y < cur_year)
     co_past = [r for y in past_years for r in seasons_h[y] if r["hg"] is not None]
     co_cur = [r for r in seasons_h.get(cur_year, []) if r["hg"] is not None]
@@ -106,6 +117,15 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
         r = co_index.get((m["home"], m["away"]))
         if r and model.is_played(m) and (r["hg"], r["ag"]) == (m["hg"], m["ag"]):
             m["hxg"], m["axg"], m["odds"] = r["hxg"], r["axg"], r["odds"]
+
+    if us:
+        understat.attach_xg(season, us, us_map)  # si football-data.co.uk n'a pas encore les xG
+    us_cur = us.get(cur_year) or {}
+    adv = understat.team_indicators(us_cur, us_map, season_teams) if us_cur else {}
+    rosters = understat.load_rosters(code) if us_cur else {}
+    squad = understat.players(us_cur, us_map, season_teams, rosters) if us_cur else {}
+    absent = understat.absences(rosters, us_map, us_cur, squad) if rosters else {}
+    leaders = understat.league_leaders(squad) if squad else []
 
     # ---- classement officiel (règles de départage) ou calculé
     table = None
@@ -141,7 +161,10 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
         s.update({"att": params["att"][t], "def": params["def"][t], "elo": elo[t],
                   "rank_att": r_att[t], "rank_def": r_def[t], "rank_elo": r_elo[t],
                   "game": history.game_stats(t, co_cur) if co_cur else None,
-                  "past": past.get(t, [])})
+                  "past": past.get(t, []),
+                  "adv": adv.get(t),
+                  "players": squad.get(t, [])[:14],
+                  "absent": absent.get(t)})
         stats[t] = s
 
     # ---- prochains matchs + cotes des bookmakers
@@ -200,6 +223,7 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
         "upcoming": upcoming_out,
         "results": results,
         "h2h": h2h,
+        "leaders": leaders,
         "backtest": bt,
     }
 
@@ -223,6 +247,8 @@ def main() -> int:
         prev = bt.get("previous", {})
         print(f"{data['name']} : {len(data['season_teams'])} équipes, "
               f"{len(data['history_seasons'])} saisons d'historique, {len(data['h2h'])} face-à-face, "
+              f"{sum(len(s['players']) for s in data['team_stats'].values())} joueurs, "
+              f"{sum(len((s.get('absent') or {}).get('missing', [])) for s in data['team_stats'].values())} absences, "
               f"{len(data['upcoming'])} à venir ({sum(1 for u in data['upcoming'] if u['market'])} avec cotes) | "
               f"fiabilité saison {bt.get('accuracy_1x2', '-')} (n={bt.get('n', 0)}), "
               f"saison passée {prev.get('accuracy_1x2', '-')} vs bookmakers "
