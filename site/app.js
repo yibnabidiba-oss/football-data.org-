@@ -208,7 +208,7 @@
         <td>${r.played}</td><td>${r.won}</td><td>${r.draw}</td><td>${r.lost}</td><td>${r.gf}:${r.ga}</td>
         <td>${r.gd > 0 ? "+" : ""}${r.gd}</td><td class="pts">${r.points}</td><td class="l">${st ? formChips(st.form) : ""}</td></tr>`;
     }
-    html += `</tbody></table></div><p class="note">Liseré vert : 4 premières places. Liseré rouge : 3 dernières places. Touchez une équipe pour sa fiche.</p>`;
+    html += `</tbody></table></div><p class="note">Liseré vert : 4 premières places. Liseré rouge : 3 dernières places (zones indicatives, elles varient selon le championnat). ${d.official_table === false ? "Classement calculé à partir des résultats : il peut différer légèrement du classement officiel (pénalités de points, règles de départage). " : ""}Touchez une équipe pour sa fiche.</p>`;
     return html;
   }
 
@@ -223,8 +223,10 @@
         <span><span class="nm">${esc(nm(t))}</span><div class="meter"><span style="width:${w.toFixed(0)}%"></span></div></span>
         <span class="el">${Math.round(s.elo)}</span></button>`;
     }).join("");
-    return `<div class="section-head"><h2>Équipes</h2><p class="sub">Classement de puissance (note Elo) · touchez une équipe</p></div>
-      <div class="team-layout"><div class="power">${list}</div>${teamPanel(state.team)}</div>`;
+    const alpha = [...d.season_teams].sort((a, b) => nm(a).localeCompare(nm(b), "fr"));
+    return `<div class="section-head"><h2>Équipes</h2><p class="sub">Choisissez une équipe, ou touchez-la dans le classement de puissance</p></div>
+      <div class="filters"><label for="team-pick">Équipe<select id="team-pick">${alpha.map((t) => `<option value="${t}" ${t === state.team ? "selected" : ""}>${esc(d.teams[t].name)}</option>`).join("")}</select></label></div>
+      <div class="team-layout"><div class="power"><div class="eyebrow">Classement de puissance (note Elo)</div>${list}</div>${teamPanel(state.team)}</div>`;
   }
 
   function teamPanel(t) {
@@ -314,7 +316,7 @@
 
   function viewJoueurs() {
     const d = D(), L = d.leaders || [];
-    if (!L.length) return `<h2>Joueurs</h2><p class="empty">Stats joueurs indisponibles pour l'instant.</p>`;
+    if (!L.length) return `<h2>Joueurs</h2><p class="empty">Les stats des joueurs ne sont disponibles que pour les 5 grands championnats (Premier League, LaLiga, Ligue 1, Bundesliga, Serie A).</p>`;
     const cols = [["goals", "Buts"], ["xg", "xG"], ["assists", "Passes D"], ["xa", "xA"], ["g_minus_xg", "Buts − xG"], ["xg90", "xG / 90 min"], ["kp", "Passes clés"]];
     const key = cols.some((c) => c[0] === state.sort) ? state.sort : "goals";
     const list = L.filter((p) => !state.club || p.team === state.club)
@@ -483,7 +485,7 @@
     document.getElementById("season").textContent = `${d.name} ${d.season}`;
     document.getElementById("demo").hidden = !d.demo;
     document.getElementById("updated").textContent = `Données mises à jour le ${fmtFull.format(new Date(d.updated_at))}.`;
-    document.querySelectorAll("#leagues button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.slug === state.slug)));
+    document.getElementById("league-select").value = state.slug;
     document.querySelectorAll("#views a").forEach((a) => {
       a.classList.toggle("on", a.dataset.view === state.view);
       a.href = `#${state.slug}-${a.dataset.view}`;
@@ -517,8 +519,6 @@
 
   // Délégation d'événements
   document.addEventListener("click", (e) => {
-    const lg = e.target.closest("#leagues button");
-    if (lg) return go(lg.dataset.slug, state.view);
     const v = e.target.closest("#views a");
     if (v) { e.preventDefault(); return go(state.slug, v.dataset.view); }
     const m = e.target.closest("[data-home][data-away]");
@@ -530,7 +530,9 @@
     if (e.target.closest("#swap")) { [state.home, state.away] = [state.away, state.home]; render(); }
   });
   document.addEventListener("change", (e) => {
+    if (e.target.id === "league-select") return go(e.target.value, state.view);
     if (e.target.id === "sort-by") { state.sort = e.target.value; return render(); }
+    if (e.target.id === "team-pick") { state.team = e.target.value; return render(); }
     if (e.target.id === "club") { state.club = e.target.value; return render(); }
     if (e.target.id === "sel-home") state.home = e.target.value;
     else if (e.target.id === "sel-away") state.away = e.target.value;
@@ -552,8 +554,9 @@
       return;
     }
     const L = state.meta.leagues;
-    document.getElementById("leagues").innerHTML = L.map((l) =>
-      `<button role="tab" data-slug="${l.slug}" aria-selected="false">${esc(l.name)}</button>`).join("");
+    const countries = [...new Set(L.map((l) => l.country))];
+    document.getElementById("league-select").innerHTML = countries.map((c) => `<optgroup label="${esc(c)}">${
+      L.filter((l) => l.country === c).sort((a, b) => a.tier - b.tier).map((l) => `<option value="${l.slug}">${esc(l.name)}</option>`).join("")}</optgroup>`).join("");
     const { view, slug } = parseHash();
     const saved = store.get("foot.league");
     const start = slug || (L.some((l) => l.slug === saved) ? saved : L[0].slug);

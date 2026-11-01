@@ -68,38 +68,76 @@ def near(d1: str, d2: str, days: int) -> bool:
     return abs((model.parse_date(d1) - model.parse_date(d2)).total_seconds()) <= days * 86400
 
 
-def build_league(code: str, now: datetime, demo: bool) -> dict | None:
-    raw = RAW.parent / "demo_raw" if demo else RAW
-    files = sorted(raw.glob(f"{code}_*.json"), key=lambda p: int(p.stem.split("_")[1]))
-    if not files:
-        return None
-    current = json.loads(files[-1].read_text())
-    cur_year = current["season"]
-    teams: dict[str, dict] = {}
-    season = normalise(current["matches"], teams)
-    fd_hist: list[dict] = []
-    hist_teams: dict[str, dict] = {}
-    for f in files[:-1]:
-        fd_hist += normalise(json.loads(f.read_text())["matches"], hist_teams)
-    for k, v in hist_teams.items():
-        teams.setdefault(k, v)
-    season_teams = sorted({m["home"] for m in season} | {m["away"] for m in season})
-    info = LEAGUES[code]
+def csv_season(rows: list[dict], fixtures: list[dict], year: int) -> list[dict]:
+    """Saison au format commun à partir de football-data.co.uk seul (matchs joués +
+    prochains matchs du fichier fixtures)."""
+    out = []
+    for r in rows:
+        if r["hg"] is None:
+            continue
+        out.append({"id": f"{r['date'][:10]}-{r['home']}-{r['away']}", "date": r["date"],
+                    "matchday": None, "status": "FINISHED", "home": r["home"], "away": r["away"],
+                    "hg": r["hg"], "ag": r["ag"], "hthg": r.get("hthg"), "htag": r.get("htag"),
+                    "hxg": r.get("hxg"), "axg": r.get("axg"), "odds": r.get("odds"), "season": year})
+    played = {(m["home"], m["away"]) for m in out}
+    for f in fixtures:
+        if (f["home"], f["away"]) in played:
+            continue
+        out.append({"id": f"{f['date'][:10]}-{f['home']}-{f['away']}", "date": f["date"],
+                    "matchday": None, "status": "TIMED", "home": f["home"], "away": f["away"],
+                    "hg": None, "ag": None, "season": year})
+    return sorted(out, key=lambda m: m["date"])
 
-    # ---- historique football-data.co.uk, relié aux identifiants football-data.org
+
+def build_league(code: str, now: datetime, demo: bool) -> dict | None:
+    info = LEAGUES[code]
+    teams: dict[str, dict] = {}
+    fd_hist: list[dict] = []
     seasons_h = {} if demo else history.load(code)
     all_rows = [r for y in seasons_h for r in seasons_h[y]]
+    fixtures = history.load_fixtures(info["csv"]) if seasons_h else []
+
+    if info.get("fd"):
+        # ---- football-data.org : calendrier complet et classement officiel
+        raw = RAW.parent / "demo_raw" if demo else RAW
+        files = sorted(raw.glob(f"{code}_*.json"), key=lambda p: int(p.stem.split("_")[1]))
+        if not files:
+            return None
+        current = json.loads(files[-1].read_text())
+        cur_year = current["season"]
+        season = normalise(current["matches"], teams)
+        hist_teams: dict[str, dict] = {}
+        for f in files[:-1]:
+            fd_hist += normalise(json.loads(f.read_text())["matches"], hist_teams)
+        for k, v in hist_teams.items():
+            teams.setdefault(k, v)
+        mapping = history.build_mapping(all_rows, season + fd_hist) if all_rows else {}
+    else:
+        # ---- football-data.co.uk seul : les noms d'équipes servent d'identifiants
+        if not seasons_h:
+            return None
+        current = {"standings": []}
+        cur_year = max(seasons_h)
+        mapping = {r[k]: r[k] for r in all_rows + fixtures for k in ("home_name", "away_name")}
+        season = []
+
+    # ---- historique football-data.co.uk relié aux identifiants
     if all_rows:
-        mapping = history.build_mapping(all_rows, season + fd_hist)
         history.attach_ids(all_rows, mapping)
-        for r in all_rows:
+        history.attach_ids(fixtures, mapping)
+        for r in all_rows + fixtures:
             for side in ("home", "away"):
                 tid = r[side]
                 if tid not in teams:
                     nm = r[side + "_name"]
                     teams[tid] = {"name": nm, "short": nm, "tla": nm[:3].upper(), "crest": ""}
+    if not info.get("fd"):
+        season = csv_season(seasons_h.get(cur_year, []), fixtures, cur_year)
+    season_teams = sorted({m["home"] for m in season} | {m["away"] for m in season})
+    if not season_teams:
+        return None
     # ---- understat : xG des saisons passées, indicateurs avancés, joueurs
-    us = {} if demo else understat.load(code)
+    us = understat.load(code) if info.get("understat") and not demo else {}
     us_map = understat.build_mapping(us, all_rows + season) if us else {}
     if us:
         for m in season:
@@ -168,9 +206,6 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
         stats[t] = s
 
     # ---- prochains matchs + cotes des bookmakers
-    fixtures = history.load_fixtures(info["csv"]) if seasons_h else []
-    if fixtures and all_rows:
-        history.attach_ids(fixtures, mapping)
     upcoming = [m for m in season if m["status"] in UPCOMING_STATUSES
                 and now <= model.parse_date(m["date"]) <= now + timedelta(days=14)]
     if not upcoming:
@@ -211,6 +246,7 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
 
     return {
         "code": code, "slug": info["slug"], "name": info["name"], "country": info["country"],
+        "tier": info["tier"], "has_players": bool(squad), "official_table": bool(info.get("fd")),
         "season": season_label(cur_year), "demo": demo,
         "updated_at": now.isoformat(timespec="minutes"),
         "history_seasons": [season_label(y) for y in past_years],
@@ -242,7 +278,7 @@ def main() -> int:
         (OUT / f"{data['slug']}.json").write_text(json.dumps(data, ensure_ascii=False,
                                                               separators=(",", ":")))
         meta["leagues"].append({"code": code, "slug": data["slug"], "name": data["name"],
-                                "country": data["country"], "season": data["season"]})
+                                "country": data["country"], "tier": data["tier"], "season": data["season"]})
         bt = data["backtest"]
         prev = bt.get("previous", {})
         print(f"{data['name']} : {len(data['season_teams'])} équipes, "

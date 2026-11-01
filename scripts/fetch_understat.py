@@ -118,7 +118,9 @@ def main() -> int:
     current = season_year(datetime.now(timezone.utc))
     ok = 0
     for code, info in LEAGUES.items():
-        league = info["understat"]
+        league = info.get("understat")
+        if not league:
+            continue
         cur_data = None
         for year in range(current - SEASONS_BACK, current + 1):
             path = OUT / f"{code}_{year}.json"

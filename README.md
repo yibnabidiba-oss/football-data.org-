@@ -1,4 +1,15 @@
-# Analyse Foot — Premier League, LaLiga, Ligue 1
+# Analyse Foot — 14 championnats européens
+
+| Pays | Championnats |
+|---|---|
+| Espagne | LaLiga, LaLiga 2 |
+| France | Ligue 1, Ligue 2 |
+| Angleterre | Premier League, Championship, League One, League Two, National League |
+| Allemagne | Bundesliga, 2. Bundesliga |
+| Italie | Serie A, Serie B |
+| Belgique | Pro League |
+
+Couverture : les 5 grands championnats ont tout (calendrier complet, classement officiel, stats joueurs, xG, absences). La Championship a le calendrier complet et le classement officiel. Les autres divisions ont résultats, classement calculé, stats de jeu, cotes et pronostics des matchs de la semaine à venir (pas de stats joueurs). Le Maroc (Botola Pro) n'est pas couvert par une source gratuite sans inscription.
 
 Application web d'analyse des matchs : pronostics, classements, fiches équipes, analyse détaillée d'un match et mesure de la fiabilité du modèle. Les données se mettent à jour automatiquement chaque lundi matin.
 

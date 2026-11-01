@@ -71,12 +71,12 @@ h3 { font-size: 1.2rem; }
 .brand-mark::after { content: ""; position: absolute; inset: 50% -2px auto; height: 2px; background: var(--ink); transform: translateY(-1px); }
 .brand-name { white-space: nowrap; font-family: var(--display); font-weight: 700; font-size: 1.35rem; text-transform: uppercase; letter-spacing: .04em; }
 .season { font-size: .8rem; color: var(--muted); white-space: nowrap; }
-.leagues { display: flex; gap: 4px; background: var(--chip); padding: 3px; border-radius: 8px; }
-.leagues button {
-  border: 0; background: transparent; padding: 6px 12px; border-radius: 6px; cursor: pointer;
-  font-family: var(--display); font-weight: 600; font-size: 1rem; letter-spacing: .02em;
+.league-pick select {
+  appearance: none; -webkit-appearance: none; border: 1px solid var(--line); background: var(--chip) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 12px center;
+  border-radius: 8px; padding: 7px 36px 7px 12px; cursor: pointer; max-width: 100%;
+  font-family: var(--display); font-weight: 600; font-size: 1.05rem; letter-spacing: .02em; color: var(--ink);
 }
-.leagues button[aria-selected="true"] { background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .views { display: flex; gap: 20px; overflow-x: auto; scrollbar-width: none; }
 .views::-webkit-scrollbar { display: none; }
 .views a {
@@ -213,8 +213,8 @@ tr.clickable:hover td { background: var(--chip); }
 @media (min-width: 600px) { .trends { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); } }
 @media (max-width: 819px) { .team-layout > .panel { order: -1; } }
 @media (max-width: 480px) {
-  .leagues { flex: 1 1 100%; }
-  .leagues button { flex: 1 1 auto; padding-inline: 8px; white-space: nowrap; font-size: .95rem; }
+  .league-pick { flex: 1 1 100%; }
+  .league-pick select { width: 100%; }
   .brand-name { font-size: 1.2rem; }
   .xg { font-size: 1.15rem; }
   .big-probs .v { font-size: 1.9rem; }

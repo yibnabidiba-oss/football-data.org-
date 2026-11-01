@@ -54,7 +54,7 @@ def main() -> int:
     RAW.mkdir(parents=True, exist_ok=True)
     season = current_season_year(datetime.now(timezone.utc))
 
-    for code in LEAGUES:
+    for code in [c for c, i in LEAGUES.items() if i.get("fd")]:
         # Saison en cours : toujours rafraîchie
         matches = get(f"/competitions/{code}/matches?season={season}", key)
         time.sleep(PAUSE)
