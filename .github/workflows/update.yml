@@ -51,6 +51,9 @@ jobs:
       - name: Stats avancées et joueurs (understat.com)
         run: python scripts/fetch_understat.py || echo "::warning::Understat indisponible, analyses sans stats joueurs."
 
+      - name: Échantillon direct (temporaire)
+        run: python scripts/probe_espn.py || true
+
       - name: Calcul des analyses
         run: |
           if ls data/raw/*.json >/dev/null 2>&1; then
@@ -61,10 +64,10 @@ jobs:
 
       - name: Sauvegarde de l'historique
         run: |
-          if [ -n "$(git status --porcelain data/raw data/history data/understat 2>/dev/null)" ]; then
+          if [ -n "$(git status --porcelain data/raw data/history data/understat data/espn_sample 2>/dev/null)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/raw data/history data/understat 2>/dev/null || true
+            git add data/raw data/history data/understat data/espn_sample 2>/dev/null || true
             git commit -m "Données du $(date -u +%Y-%m-%d)"
             git push
           fi
