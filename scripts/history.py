@@ -78,6 +78,7 @@ def read_csv(path: Path) -> list[dict]:
             "hr": _num(r.get("HR"), int), "ar": _num(r.get("AR"), int),
             "hxg": _num(r.get("HxG")), "axg": _num(r.get("AxG")),
             "odds": implied(oh, od, oa, o_ov, o_un),
+            "odds_raw": [oh, od, oa, o_ov, o_un] if oh and od and oa else None,
         })
     return rows
 

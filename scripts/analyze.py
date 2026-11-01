@@ -262,6 +262,7 @@ def build_league(code: str, now: datetime, demo: bool) -> dict | None:
     return {
         "code": code, "slug": info["slug"], "name": info["name"], "country": info["country"],
         "tier": info["tier"], "has_players": bool(squad), "official_table": bool(info.get("fd")),
+        "espn": info.get("espn"),
         "season": season_label(cur_year), "demo": demo,
         "updated_at": now.isoformat(timespec="minutes"),
         "history_seasons": [season_label(y) for y in past_years],

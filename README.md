@@ -19,6 +19,7 @@ Application web d'analyse des matchs : pronostics, classements, fiches équipes,
 |---|---|---|
 | [football-data.org](https://www.football-data.org) | Saison en cours : calendrier, résultats, classement officiel | gratuite, obligatoire |
 | [football-data.co.uk](https://www.football-data.co.uk) | 10 saisons : résultats, score à la mi-temps, tirs, tirs cadrés, corners, fautes, cartons, xG (saison en cours), cotes des bookmakers, prochains matchs avec cotes | aucune |
+| ESPN (site.api.espn.com) | Scores et stats en direct, lus directement par le navigateur. Source non officielle, susceptible de changer | aucune |
 | [understat.com](https://understat.com) | 4 saisons : xG par match, PPDA (pressing), passes dans les 20 derniers mètres, points attendus ; stats des joueurs (minutes, buts, xG, passes décisives, xA, tirs, passes clés) ; compositions des derniers matchs | aucune |
 
 Les deux sources sont reliées automatiquement : les noms d'équipes sont associés en comparant les matchs communs (même jour, même score).
@@ -29,10 +30,24 @@ Les deux sources sont reliées automatiquement : les noms d'équipes sont associ
 |---|---|
 | **Pronostics** | Matchs des 14 prochains jours : probabilités 1 / N / 2, buts attendus, score le plus probable, +2,5 buts, « les deux marquent », probabilités des bookmakers et écarts avec le modèle |
 | **Classement** | Classement officiel, forme sur 5 matchs, tendances du championnat (buts, xG, tirs, corners, cartons par match…) |
+| **Matchs** | Choix de la date (calendrier, flèches, pastilles des jours) : matchs à venir de toute la saison avec pronostic et conseil, matchs passés avec le score et le pronostic fait avant le match (juste ou raté) |
+| **Direct** | Matchs du jour en temps réel (ESPN, actualisé toutes les 60 s) : score, minute, buteurs, cartons rouges, possession, tirs, tirs cadrés, corners, fautes ; probabilités recalculées en direct, prochain but, conseils en direct, lecture du jeu |
 | **Joueurs** | Classement des joueurs du championnat, triable par buts, xG, passes décisives, xA, finition (buts − xG), xG par 90 minutes, passes clés ; filtre par équipe |
 | **Équipes** | Classement de puissance (Elo sur 10 saisons), indices d'attaque et de défense, stats domicile / extérieur, joueurs clés et part des occasions de chacun, absents du dernier match, indicateurs avancés (xG, PPDA, deep, points attendus, finition, forme xG), stats de jeu, classement final des 10 dernières saisons |
 | **Analyse match** | N'importe quelle affiche : probabilités, marchés, grille des scores, cotes « justes », corners et cartons attendus, score probable selon chaque issue, comparaison des indicateurs avancés, joueurs clés et absences des deux équipes, face-à-face sur 10 saisons avec score à la mi-temps |
 | **Fiabilité** | Test du modèle sur la saison en cours et sur toute la saison passée, comparé aux bookmakers |
+
+### Les recommandations
+
+Chaque match reçoit un conseil (victoire ou double chance, et une tendance sur les buts quand elle est nette) avec un niveau de confiance. Les chiffres viennent d'un test sur 10 346 matchs des saisons 2024-25 et 2025-26 :
+
+| Confiance | Part des matchs | Le favori gagne | Double chance du favori |
+|---|---|---|---|
+| Élevée (favori ≥ 60 %) | 14 % | 70 % | 89 % |
+| Moyenne (50-60 %) | 24 % | 57 % | 81 % |
+| Faible (< 50 %) | 62 % | 43 % | 72 % |
+
+Les cotes des bookmakers, quand elles existent, servent de base : sur ces matchs, elles prévoient mieux que le modèle, et les combiner au modèle n'améliore rien. Parier quand le modèle s'écarte des bookmakers aurait fait perdre 12 à 15 % de la mise, c'est pourquoi l'app ne propose pas ce type de « bon coup ». Aucune méthode ne garantit un gain.
 
 ### Le modèle
 

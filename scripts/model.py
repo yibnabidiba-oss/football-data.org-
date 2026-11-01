@@ -413,7 +413,9 @@ def backtest(season_matches: list[dict], history: list[dict], min_matchday: int 
             calib[b][2] += i == outcome
         recent.append({"date": day, "home": m["home"], "away": m["away"],
                        "score": f"{m['hg']}-{m['ag']}", "p_home": p["p_home"],
-                       "p_draw": p["p_draw"], "p_away": p["p_away"], "hit": hit})
+                       "p_draw": p["p_draw"], "p_away": p["p_away"], "hit": hit,
+                       "over25": p["over25"], "btts": p["btts"], "hg": m["hg"], "ag": m["ag"],
+                       "odds_raw": m.get("odds_raw")})
     n = acc["n"]
     out = {
         "n": n,

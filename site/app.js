@@ -1,7 +1,7 @@
 /* Analyse Foot — interface (aucune dépendance). Les données viennent de data/*.json. */
 (() => {
   "use strict";
-  const VIEWS = ["matchs", "classement", "equipes", "joueurs", "analyse", "fiabilite"];
+  const VIEWS = ["matchs", "direct", "classement", "equipes", "joueurs", "analyse", "fiabilite"];
   const MAX_GOALS = 10;
   const app = document.getElementById("app");
   const state = { meta: null, slug: null, view: "matchs", data: {}, team: null, home: null, away: null, sort: "goals", club: "" };
@@ -91,15 +91,113 @@
     return `${opts[0][1]} (${pct(opts[0][0])})`;
   }
 
-  function marketLine(p, o, home, away) {
+  function marketLine(p, o) {
     const r = (x) => Math.round(x * 100);
-    const labels = [`victoire ${nm(home)}`, "le nul", `victoire ${nm(away)}`];
-    const mp = [p.p_home, p.p_draw, p.p_away], bp = [o.p_home, o.p_draw, o.p_away];
-    const diffs = mp.map((v, i) => v - bp[i]);
-    const i = diffs.indexOf(Math.max(...diffs));
-    const edge = diffs[i] >= 0.05
-      ? `<span class="chip edge">Le modèle croit plus que les bookmakers à ${esc(labels[i])} (+${r(diffs[i])} pts)</span>` : "";
-    return `<div class="mkt"><span>Bookmakers</span><b>${r(o.p_home)} % · ${r(o.p_draw)} % · ${r(o.p_away)} %</b></div>${edge ? `<div class="chips">${edge}</div>` : ""}`;
+    return `<div class="mkt"><span>Bookmakers</span><b>${r(o.p_home)} % · ${r(o.p_draw)} % · ${r(o.p_away)} %</b></div>`;
+  }
+
+  // ------------------------------------------------------------------ recommandations
+  const FL = window.FootLive;
+  const odd = (p) => p > 0 ? num(1 / p) : "–";
+  function recoLine(p, market, home, away) {
+    const r = FL.recommend(p, market, [nm(home), "", nm(away)]);
+    return `<div class="reco-line conf-${r.conf}"><span class="rl-k">Conseil</span><b>${esc(r.main.label)}</b>
+      <span class="rl-c">confiance ${FL.CONF_LABEL[r.conf]}</span>${r.goals ? `<span class="rl-g">· ${esc(r.goals.label)}</span>` : ""}</div>`;
+  }
+  function recoPanel(p, market, home, away) {
+    const r = FL.recommend(p, market, [nm(home), "", nm(away)]);
+    const row = (o, hist) => `<div class="reco-row"><div><b>${esc(o.label)}</b><br><small class="muted">probabilité ${pct(o.p)} · à jouer seulement à une cote d'au moins ${odd(o.p)}</small></div>
+      ${hist != null ? `<div class="hist"><b>${pct(hist)}</b><small>de réussite<br>historique</small></div>` : ""}</div>`;
+    return `<section class="panel reco conf-${r.conf}"><div class="section-head"><h3>Recommandations</h3>
+        <span class="conf-pill">Confiance ${FL.CONF_LABEL[r.conf]}</span></div>
+      ${r.open ? `<p class="note">Match ouvert : aucun favori net. La double chance limite le risque.</p>` : ""}
+      ${row(r.main, r.main.hist)}${r.alt ? row(r.alt, r.alt.hist) : ""}
+      ${r.goals ? row(r.goals, null) : `<p class="note">Pas de tendance nette sur le nombre de buts.</p>`}
+      <p class="note">Basé sur ${r.src === "book" ? "les cotes des bookmakers, qui se sont révélées la référence la plus fiable" : "le modèle (pas encore de cotes pour ce match)"}. « Réussite historique » : part des conseils de ce niveau de confiance qui se sont vérifiés sur 10 346 matchs (2024-2026). Sur cette même période, parier quand le modèle s'écartait des bookmakers aurait fait perdre 12 % de la mise : aucune méthode ne garantit un gain. Pariez de façon responsable (18+).</p></section>`;
+  }
+
+  // ------------------------------------------------------------------ direct
+  const live = { timer: null, slug: null, events: [], at: null, err: null, loading: false };
+  const todayKey = () => new Date().toLocaleDateString("sv-SE");
+
+  async function fetchLive() {
+    const d = D();
+    if (!d.espn || live.loading) return;
+    live.loading = true;
+    try {
+      const js = await FL.fetchScoreboard(d.espn, todayKey());
+      live.events = (js.events || []).map(FL.parseEvent);
+      live.slug = state.slug; live.at = new Date(); live.err = null;
+    } catch (e) {
+      live.err = "La source des scores en direct ne répond pas. Nouvel essai dans 60 secondes.";
+    }
+    live.loading = false;
+    if (state.view === "direct") render();
+  }
+  function startLive() {
+    stopLive();
+    if (live.slug !== state.slug) { live.events = []; live.at = null; }
+    fetchLive();
+    live.timer = setInterval(() => { if (!document.hidden) fetchLive(); }, 60000);
+  }
+  function stopLive() { clearInterval(live.timer); live.timer = null; }
+
+  function liveCard(ev) {
+    const d = D();
+    const m = FL.matchToApp(ev, [...d.upcoming, ...(d.results || [])], d.teams);
+    const nH = m ? nm(m.home) : ev.home.name, nA = m ? nm(m.away) : ev.away.name;
+    const pre = m ? (m.pred || predict(m.home, m.away)) : null;
+    const lp = pre ? FL.liveProbs(pre.xg_home, pre.xg_away, ev) : null;
+    const st = (k, lab, fmt = (x) => x) => ev.home[k] != null && ev.away[k] != null
+      ? `<div class="ls"><span>${fmt(ev.home[k])}</span><small>${lab}</small><span>${fmt(ev.away[k])}</span></div>` : "";
+    const goals = ev.goals.map((g) => `<li class="${g.team}"><b>${esc(g.minute)}</b> ${esc(g.who || g.type)}${g.pen ? " (pen.)" : ""}${g.own ? " (c.s.c.)" : ""}</li>`).join("");
+    const reds = (n) => n ? ` <span class="red-card" title="Carton rouge">${"▮".repeat(n)}</span>` : "";
+    const status = ev.state === "in" ? `<span class="live-dot"></span>${ev.halftime ? "Mi-temps" : esc(ev.clock)}`
+      : ev.state === "post" ? "Terminé" : fmtTime.format(new Date(ev.date));
+    let body = "";
+    if (lp && ev.state !== "post") {
+      const adv = FL.liveAdvice(lp, ev, nH, nA);
+      const read = ev.state === "in" ? FL.reading(ev, nH, nA) : [];
+      body = `<div class="pre-head"><span>${ev.state === "in" ? "Probabilités en direct" : "Probabilités avant-match"}</span></div>
+        ${bar(lp)}
+        ${ev.state === "in" ? `<div class="next-goal"><div class="ng-t">Prochain but</div>
+          <div><b>${pct(lp.next_home)}</b><small>${esc(nH)}</small></div><div><b>${pct(lp.next_none)}</b><small>plus de but</small></div><div><b>${pct(lp.next_away)}</b><small>${esc(nA)}</small></div></div>` : ""}
+        <div class="advice">${adv.map((a) => `<div class="adv-item ${a.p >= 0.7 ? "strong" : ""}"><span>${esc(a.label)}</span><b>${pct(a.p)}</b></div>`).join("")}</div>
+        ${read.length ? `<ul class="reading">${read.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
+        ${ev.state === "pre" && m ? recoLine(pre, m.market, m.home, m.away) : ""}`;
+    } else if (!lp) {
+      body = `<p class="note">Match non reconnu dans les données de l'app : score et stats seulement.</p>`;
+    }
+    return `<div class="match live-card ${ev.state}" ${m ? `data-home="${m.home}" data-away="${m.away}"` : ""}>
+      <div class="match-top"><span class="status">${status}</span><span>${ev.state === "in" ? "en direct" : ""}</span></div>
+      <div class="teams"><span class="team">${esc(nH)}${reds(ev.home.red)}</span>
+        <span class="score">${ev.state === "pre" ? "–" : `${ev.home.score} – ${ev.away.score}`}</span>
+        <span class="team away">${reds(ev.away.red)}${esc(nA)}</span></div>
+      ${goals ? `<ul class="goals">${goals}</ul>` : ""}
+      ${ev.state !== "pre" ? `<div class="live-stats">${st("poss", "possession", (x) => Math.round(x) + " %")}${st("shots", "tirs")}${st("sot", "tirs cadrés")}${st("corners", "corners")}${st("fouls", "fautes")}</div>` : ""}
+      ${body}
+    </div>`;
+  }
+
+  function viewDirect() {
+    const d = D();
+    if (!d.espn) return `<h2>Direct</h2><p class="empty">Le direct n'est pas disponible pour ce championnat.</p>`;
+    const evs = live.slug === state.slug ? live.events : [];
+    const groups = [["in", "En cours"], ["pre", "À venir aujourd'hui"], ["post", "Terminés aujourd'hui"]];
+    let html = `<div class="section-head"><h2>Direct</h2>
+      <p class="sub">${live.at ? `Actualisé à ${live.at.toLocaleTimeString("fr-FR")} · toutes les 60 s` : "Chargement…"}</p></div>
+      <div class="date-tools"><button class="btn" id="live-refresh">Actualiser</button></div>
+      ${live.err ? `<div class="warn">${esc(live.err)}</div>` : ""}`;
+    if (live.at && !evs.length) {
+      const next = d.upcoming.find((m) => new Date(m.date) > new Date());
+      html += `<p class="empty">Aucun match de ${esc(d.name)} aujourd'hui.${next ? ` Prochain match : ${esc(nm(next.home))} – ${esc(nm(next.away))}, ${esc(fmtLong.format(new Date(next.date)))}.` : ""}</p>`;
+    }
+    for (const [k, lab] of groups) {
+      const list = evs.filter((e) => e.state === k);
+      if (list.length) html += `<section class="day"><div class="eyebrow">${lab} · ${list.length}</div><div class="cards">${list.map(liveCard).join("")}</div></section>`;
+    }
+    html += `<p class="note">Scores et stats : ESPN (source non officielle, décalage possible de quelques dizaines de secondes). Les probabilités en direct partent du pronostic d'avant-match, puis tiennent compte du score, du temps restant et des cartons rouges. La lecture du jeu (tirs, possession) est indicative. Pariez de façon responsable (18+).</p>`;
+    return html;
   }
 
   const POS = { GK: "G", D: "D", M: "M", F: "A", S: "R" };
@@ -173,10 +271,10 @@
         <span class="xg">${num(p.xg_home, 1)} – ${num(p.xg_away, 1)}<small>BUTS ATTENDUS</small></span>
         <span class="team away">${esc(nm(m.away))}</span></div>
       ${bar(p)}
-      ${m.market ? marketLine(p, m.market, m.home, m.away) : ""}
+      ${m.market ? marketLine(p, m.market) : ""}
+      ${recoLine(p, m.market, m.home, m.away)}
       ${absentNames(m.home) || absentNames(m.away) ? `<div class="abs-line">Absents au dernier match : ${[absentNames(m.home) && `${esc(nm(m.home))} (${esc(absentNames(m.home))})`, absentNames(m.away) && `${esc(nm(m.away))} (${esc(absentNames(m.away))})`].filter(Boolean).join(" · ")}</div>` : ""}
-      <div class="chips"><span class="chip pick">${esc(pickLabel(p, m.home, m.away))}</span>
-        <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
+      <div class="chips"><span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
         <span class="chip">+2,5 buts <b>${pct(p.over25)}</b></span>
         <span class="chip">Les deux marquent <b>${pct(p.btts)}</b></span></div>
       ${m.pred ? "" : '<p class="note">Pronostic calculé avec les forces actuelles des équipes : il sera affiné d\'ici le match.</p>'}
@@ -435,12 +533,13 @@
           <div class="d"><div class="v">${pct(p.p_draw)}</div><div class="k">Nul</div></div>
           <div class="a"><div class="v">${pct(p.p_away)}</div><div class="k">${esc(nm(a))}</div></div></div>
         ${bar(p)}
-        ${fixture?.market ? marketLine(p, fixture.market, h, a) : ""}
+        ${fixture?.market ? marketLine(p, fixture.market) : ""}
         <div class="chips"><span class="chip pick">${esc(pickLabel(p, h, a))}</span>
           <span class="chip">Score probable <b>${likelyScore(p).score}</b></span>
           <span class="chip">Buts attendus <b>${num(p.xg_home)} – ${num(p.xg_away)}</b></span>
           <span class="chip">Cote juste 1/N/2 <b>${num(1 / p.p_home)} · ${num(1 / p.p_draw)} · ${num(1 / p.p_away)}</b></span></div>
       </section>
+      ${recoPanel(p, fixture?.market, h, a)}
       <div class="grid2">
         <section class="panel"><h3>Marchés</h3><div class="markets">
           ${mk("Plus de 1,5 but", p.over15)}${mk("Plus de 2,5 buts", p.over25)}${mk("Plus de 3,5 buts", p.over35)}
@@ -535,7 +634,7 @@
   }
 
   // ------------------------------------------------------------------ rendu et navigation
-  const renderers = { matchs: viewMatchs, classement: viewClassement, equipes: viewEquipes, joueurs: viewJoueurs, analyse: viewAnalyse, fiabilite: viewFiabilite };
+  const renderers = { matchs: viewMatchs, direct: viewDirect, classement: viewClassement, equipes: viewEquipes, joueurs: viewJoueurs, analyse: viewAnalyse, fiabilite: viewFiabilite };
 
   function render() {
     const d = D();
@@ -566,6 +665,7 @@
     store.set("foot.league", slug);
     if (push && location.hash !== `#${slug}-${view}`) history.replaceState(null, "", `#${slug}-${view}`);
     try { await load(slug); render(); } catch (e) { app.innerHTML = `<p class="empty">Impossible de charger les données : ${esc(e.message)}.</p>`; }
+    if (state.view === "direct") startLive(); else stopLive();
     window.scrollTo({ top: 0 });
   }
 
@@ -580,6 +680,7 @@
   document.addEventListener("click", (e) => {
     const v = e.target.closest("#views a");
     if (v) { e.preventDefault(); return go(state.slug, v.dataset.view); }
+    if (e.target.closest("#live-refresh")) { fetchLive(); return; }
     const dd = e.target.closest("[data-day]");
     if (dd) { state.date = dd.dataset.day; render(); return; }
     const m = e.target.closest("[data-home][data-away]");
